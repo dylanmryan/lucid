@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 
 import lucid.agent as agent_mod
-from lucid.agent import CachedLLM, Task, parse_reply, system_prompt, user_message
+from lucid.agent import CachedLLM, Planner, Task, parse_reply, system_prompt, user_message
 from lucid.core import HAND, Action, EnvConfig, State
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
@@ -91,3 +91,34 @@ def test_cached_llm_caches(tmp_path, monkeypatch):
     assert (llm.hits, llm.misses) == (1, 1)
     r3 = llm.complete([{"role": "user", "content": "different"}])
     assert counter["calls"] == 2 and r3["cache_hit"] is False
+
+
+TASK = Task(State("receiving", ("receiving", "shelf_a")), {0: "shelf_b"})
+
+
+def _planner(tmp_path, monkeypatch, replies):
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    return Planner(CachedLLM("test-model", tmp_path), CFG, max_parse_retries=2), counter
+
+
+def test_planner_good_first_try(tmp_path, monkeypatch):
+    planner, counter = _planner(tmp_path, monkeypatch, [GOOD])
+    action, belief, meta = planner.draft(TASK, [], None)
+    assert action == Action("pick", 1)
+    assert belief.robot_zone == "shelf_a"
+    assert meta["calls"] == 1 and meta["n_parse_retries"] == 0
+
+
+def test_planner_recovers_from_malformed(tmp_path, monkeypatch):
+    planner, counter = _planner(tmp_path, monkeypatch, ["garbage", GOOD])
+    action, belief, meta = planner.draft(TASK, [], None)
+    assert action == Action("pick", 1)
+    assert meta["calls"] == 2 and meta["n_parse_retries"] == 1
+
+
+def test_planner_parse_failure_after_retries(tmp_path, monkeypatch):
+    planner, counter = _planner(tmp_path, monkeypatch, ["nope", "still nope", "never"])
+    action, belief, meta = planner.draft(TASK, [], None)
+    assert action is None and belief is None
+    assert meta["calls"] == 3 and meta["n_parse_retries"] == 2

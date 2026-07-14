@@ -113,3 +113,51 @@ class CachedLLM:
         path.write_text(json.dumps(out))
         self.misses += 1
         return out | {"cache_hit": False}
+
+
+def _blank_meta() -> dict:
+    return {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_hits": 0, "n_parse_retries": 0}
+
+
+def _accumulate(meta: dict, other: dict) -> None:
+    for k in meta:
+        meta[k] += other[k]
+
+
+class Planner:
+    """Stepwise JSON-protocol planner with bounded retries on malformed replies."""
+
+    def __init__(self, llm: CachedLLM, cfg: EnvConfig, max_parse_retries: int = 2):
+        self.llm = llm
+        self.cfg = cfg
+        self.max_parse_retries = max_parse_retries
+
+    def draft(
+        self, task: Task, history: list[str], note: str | None
+    ) -> tuple[Action | None, State | None, dict]:
+        """One drafted (action, belief). (None, None, meta) means parse failure."""
+        messages = [
+            {"role": "system", "content": system_prompt(self.cfg)},
+            {"role": "user", "content": user_message(task, history, note)},
+        ]
+        meta = _blank_meta()
+        for attempt in range(1 + self.max_parse_retries):
+            r = self.llm.complete(messages)
+            meta["calls"] += 1
+            meta["tokens_in"] += r["tokens_in"]
+            meta["tokens_out"] += r["tokens_out"]
+            meta["cache_hits"] += int(r["cache_hit"])
+            try:
+                action, belief = parse_reply(r["text"], self.cfg)
+                return action, belief, meta
+            except (ValueError, KeyError, TypeError) as e:
+                meta["n_parse_retries"] = min(attempt + 1, self.max_parse_retries)
+                messages += [
+                    {"role": "assistant", "content": r["text"]},
+                    {
+                        "role": "user",
+                        "content": f"Invalid reply ({e}). Reply with exactly one JSON object "
+                        "in the required format.",
+                    },
+                ]
+        return None, None, meta
