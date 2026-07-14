@@ -193,3 +193,108 @@ class Checker:
             + ". Reconsider your action and belief."
         )
         return False, note, wm_state
+
+
+def run_episode(
+    env, planner: Planner, checker: Checker | None, task_seed: int, max_revisions: int = 2
+) -> tuple[list[dict], bool]:
+    """One episode; returns (per-step rows, success). Agent sees only valid flags."""
+    from lucid.env import goals_met  # local import to avoid a cycle at module load
+
+    state, goals = env.reset(task_seed)
+    task = Task(state, goals)
+    history: list[str] = []
+    working_belief = state  # the checker's reference point; starts at the known initial state
+    rows: list[dict] = []
+    for step in range(env.cfg.max_steps):
+        action, belief, meta = planner.draft(task, history, None)
+        n_revisions = 0
+        wm_state = None
+        if action is None:
+            rows.append(_row(task_seed, step, env.state, None, None, None, False, 0, meta, True))
+            history.append(f"step {step}: PARSE FAILURE - no action executed")
+            continue
+        if checker is not None:
+            ok, note, wm_state = checker.check(working_belief, action, belief)
+            while not ok and n_revisions < max_revisions:
+                n_revisions += 1
+                action2, belief2, meta2 = planner.draft(task, history, note)
+                _accumulate(meta, meta2)
+                if action2 is None:
+                    break
+                action, belief = action2, belief2
+                ok, note, wm_state = checker.check(working_belief, action, belief)
+            working_belief = belief if ok else wm_state
+        else:
+            working_belief = belief
+        true_state, valid, done = env.step(action)
+        history.append(f"step {step}: {action.to_json()} -> {'valid' if valid else 'invalid'}")
+        rows.append(
+            _row(
+                task_seed,
+                step,
+                true_state,
+                belief,
+                wm_state,
+                action,
+                valid,
+                n_revisions,
+                meta,
+                False,
+            )
+        )
+        if done:
+            break
+    return rows, goals_met(env.state, goals)
+
+
+def _row(
+    episode_id, step, true_state, belief, wm_state, action, valid, n_revisions, meta, parse_failure
+) -> dict:
+    return {
+        "episode_id": episode_id,
+        "step": step,
+        "true_state": true_state.to_json(),
+        "believed_state": belief.to_json() if belief else None,
+        "wm_predicted_state": wm_state.to_json() if wm_state else None,
+        "action": action.to_json() if action else None,
+        "valid": valid,
+        "n_revisions": n_revisions,
+        "n_parse_retries": meta["n_parse_retries"],
+        "parse_failure": parse_failure,
+        "calls": meta["calls"],
+        "cache_hits": meta["cache_hits"],
+        "tokens_in": meta["tokens_in"],
+        "tokens_out": meta["tokens_out"],
+    }
+
+
+def summarize(episodes: list[tuple[list[dict], bool]]) -> dict:
+    """Aggregate metrics over (rows, success) pairs. The headline: hallucinated-state rate."""
+    rows = [r for ep, _ in episodes for r in ep]
+    scored = [r for r in rows if not r["parse_failure"]]
+    hallucinated = [r for r in scored if r["believed_state"] != r["true_state"]]
+    first_div = []
+    for ep, _ in episodes:
+        div = [
+            r["step"]
+            for r in ep
+            if not r["parse_failure"] and r["believed_state"] != r["true_state"]
+        ]
+        if div:
+            first_div.append(min(div))
+    calls = sum(r["calls"] for r in rows)
+    return {
+        "n_episodes": len(episodes),
+        "n_steps": len(rows),
+        "hallucinated_state_rate": len(hallucinated) / len(scored) if scored else 0.0,
+        "success_rate": sum(s for _, s in episodes) / len(episodes) if episodes else 0.0,
+        "parse_failure_rate": sum(r["parse_failure"] for r in rows) / calls if calls else 0.0,
+        "invalid_action_rate": sum(not r["valid"] for r in scored) / len(scored) if scored else 0.0,
+        "mean_first_divergence_step": (sum(first_div) / len(first_div)) if first_div else None,
+        "calls_per_episode": calls / len(episodes) if episodes else 0.0,
+        "revisions_per_step": sum(r["n_revisions"] for r in rows) / len(rows) if rows else 0.0,
+        "cache_hit_rate": sum(r["cache_hits"] for r in rows) / calls if calls else 0.0,
+        "tokens_in": sum(r["tokens_in"] for r in rows),
+        "tokens_out": sum(r["tokens_out"] for r in rows),
+    }

@@ -1,9 +1,23 @@
-import pytest
+import json
+import random
 from types import SimpleNamespace
 
+import pytest
+
 import lucid.agent as agent_mod
-from lucid.agent import CachedLLM, Checker, Planner, Task, parse_reply, system_prompt, user_message
+from lucid.agent import (
+    CachedLLM,
+    Checker,
+    Planner,
+    Task,
+    parse_reply,
+    run_episode,
+    summarize,
+    system_prompt,
+    user_message,
+)
 from lucid.core import HAND, Action, EnvConfig, Prediction, State
+from lucid.env import WarehouseEnv, make_task, solve, transition
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 
@@ -158,3 +172,82 @@ def test_checker_note_on_disagreement():
     )
     assert not ok and wm_state == wm
     assert "box_1" in note and "0.03" in note
+
+
+def scripted_replies(cfg, seed, lie_at_step=None):
+    """Build the exact reply sequence a perfect (or once-lying) agent would emit."""
+    state, goals = make_task(cfg, random.Random(seed))
+    replies = []
+    cur = state
+    for step, action in enumerate(solve(state, goals, cfg)):
+        nxt, _ = transition(cur, action, cfg)
+        believed = nxt
+        if step == lie_at_step:
+            wrong_zone = next(z for z in cfg.zones if z != nxt.robot_zone)
+            believed = State(wrong_zone, nxt.box_zones)
+        replies.append(
+            json.dumps(
+                {
+                    "action": json.loads(action.to_json()),
+                    "believed_next_state": json.loads(believed.to_json()),
+                }
+            )
+        )
+        cur = nxt
+    return replies
+
+
+def test_run_episode_perfect_agent(tmp_path, monkeypatch):
+    cfg = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
+    replies = scripted_replies(cfg, seed=7)
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), cfg)
+    rows, success = run_episode(WarehouseEnv(cfg), planner, None, task_seed=7, max_revisions=2)
+    assert success is True
+    assert all(r["believed_state"] == r["true_state"] for r in rows)
+    assert rows[0]["parse_failure"] is False
+    expected_keys = {
+        "episode_id",
+        "step",
+        "true_state",
+        "believed_state",
+        "wm_predicted_state",
+        "action",
+        "valid",
+        "n_revisions",
+        "n_parse_retries",
+        "parse_failure",
+        "calls",
+        "cache_hits",
+        "tokens_in",
+        "tokens_out",
+    }
+    assert set(rows[0]) == expected_keys
+
+
+def test_run_episode_hallucination_counted(tmp_path, monkeypatch):
+    cfg = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
+    replies = scripted_replies(cfg, seed=7, lie_at_step=1)
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), cfg)
+    rows, success = run_episode(WarehouseEnv(cfg), planner, None, task_seed=7, max_revisions=2)
+    summary = summarize([(rows, success)])
+    assert 0 < summary["hallucinated_state_rate"] < 1
+    assert summary["n_episodes"] == 1
+    assert summary["mean_first_divergence_step"] == 1
+
+
+def test_summarize_perfect(tmp_path, monkeypatch):
+    cfg = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
+    replies = scripted_replies(cfg, seed=7)
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), cfg)
+    rows, success = run_episode(WarehouseEnv(cfg), planner, None, task_seed=7, max_revisions=2)
+    s = summarize([(rows, success)])
+    assert s["hallucinated_state_rate"] == 0.0
+    assert s["success_rate"] == 1.0
+    assert s["parse_failure_rate"] == 0.0
+    assert s["mean_first_divergence_step"] is None
