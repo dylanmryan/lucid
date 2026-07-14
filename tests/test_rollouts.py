@@ -1,7 +1,7 @@
 import pyarrow.parquet as pq
 
-from lucid.core import EnvConfig
-from lucid.env import generate_rollouts, write_splits
+from lucid.core import Action, EnvConfig, State
+from lucid.env import generate_rollouts, is_valid, transition, write_splits
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 
@@ -19,6 +19,16 @@ def test_rollouts_deterministic():
     a = generate_rollouts(CFG, n_episodes=10, seed=2)
     b = generate_rollouts(CFG, n_episodes=10, seed=2)
     assert a.equals(b)
+
+
+def test_rows_match_env_dynamics():
+    """Every recorded row must agree with transition()/is_valid() — the WM trains on this."""
+    t = generate_rollouts(CFG, n_episodes=60, seed=4)
+    for row in t.to_pylist():
+        s, a = State.from_json(row["state"]), Action.from_json(row["action"])
+        expected_next, expected_valid = transition(s, a, CFG)
+        assert State.from_json(row["next_state"]) == expected_next
+        assert row["valid"] == expected_valid == is_valid(s, a, CFG)
 
 
 def test_splits_disjoint_by_episode(tmp_path):

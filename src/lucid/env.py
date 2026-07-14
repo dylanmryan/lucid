@@ -137,6 +137,8 @@ def _episode(env: WarehouseEnv, seed: int, policy: str, rng: random.Random) -> l
 def generate_rollouts(
     cfg: EnvConfig, n_episodes: int, seed: int, policy_mix=POLICY_MIX
 ) -> pa.Table:
+    """Scripted episodes whose goals are already met at reset record zero rows,
+    so the table can hold slightly fewer episodes than requested (~3% at small configs)."""
     rng = random.Random(seed)
     env = WarehouseEnv(cfg)
     policies = [p for p, _ in policy_mix]
