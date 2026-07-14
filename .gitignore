@@ -1,4 +1,5 @@
-.venv/
+.venv
+.venv.nosync/
 __pycache__/
 data/
 .DS_Store

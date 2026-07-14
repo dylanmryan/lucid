@@ -1,0 +1,39 @@
+[project]
+name = "lucid"
+version = "0.1.0"
+description = "A lie detector for AI agents: world-model grounding for LLM planners"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.3",
+    "numpy>=1.26",
+    "pyarrow>=16",
+    "matplotlib>=3.9",
+]
+
+[project.scripts]
+lucid-gen-rollouts = "lucid.cli:gen_rollouts_main"
+lucid-train-wm = "lucid.cli:train_wm_main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lucid"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
