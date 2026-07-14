@@ -295,3 +295,56 @@ def test_run_agent_main_rejects_unknown_arm(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit):
         run_agent_main()
+
+
+class PerfectEnsemble:
+    """A world model that is exactly right: predicts via the env's true dynamics."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def predict(self, state, action):
+        nxt, valid = transition(state, action, self.cfg)
+        return Prediction(
+            validity_prob=1.0 if valid else 0.0,
+            point_next_state=nxt,
+            disagreement=0.0,
+            per_var_disagreement={},
+            entropy=0.0,
+            next_state_dist={},
+        )
+
+
+def test_checker_revision_corrects_lie(tmp_path, monkeypatch):
+    correct = scripted_replies(CFG, seed=7)
+    lied = scripted_replies(CFG, seed=7, lie_at_step=0)
+    replies = [lied[0], correct[0]] + correct[1:]  # lie once, corrected on revision
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), CFG)
+    checker = Checker(PerfectEnsemble(CFG))
+    rows, success = run_episode(WarehouseEnv(CFG), planner, checker, task_seed=7, max_revisions=2)
+    assert success is True
+    assert rows[0]["n_revisions"] == 1
+    assert rows[0]["calls"] == 2
+    assert rows[0]["believed_state"] == rows[0]["true_state"]  # revision fixed the lie
+    assert all(r["n_revisions"] == 0 for r in rows[1:])
+
+
+def test_checker_adopts_wm_belief_after_exhausted_revisions(tmp_path, monkeypatch):
+    correct = scripted_replies(CFG, seed=7)
+    lied = scripted_replies(CFG, seed=7, lie_at_step=0)
+    # At step 0: lie 3 times (exhausts revisions); at step 1+: one revision per step
+    replies = [lied[0], lied[0], lied[0], lied[1], correct[1], correct[2], correct[3]]
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), CFG)
+    checker = Checker(PerfectEnsemble(CFG))
+    rows, success = run_episode(WarehouseEnv(CFG), planner, checker, task_seed=7, max_revisions=2)
+    assert rows[0]["n_revisions"] == 2
+    assert rows[0]["calls"] == 3
+    assert rows[0]["believed_state"] != rows[0]["true_state"]  # lie was not corrected
+    # After WM adoption at step 0, step 1 starts with correct working_belief
+    # but planner still outputs a lie (step 1 with lied[1]), which gets corrected
+    assert rows[1]["n_revisions"] == 1
+    assert success is True
