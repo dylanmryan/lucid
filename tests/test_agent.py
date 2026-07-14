@@ -2,8 +2,8 @@ import pytest
 from types import SimpleNamespace
 
 import lucid.agent as agent_mod
-from lucid.agent import CachedLLM, Planner, Task, parse_reply, system_prompt, user_message
-from lucid.core import HAND, Action, EnvConfig, State
+from lucid.agent import CachedLLM, Checker, Planner, Task, parse_reply, system_prompt, user_message
+from lucid.core import HAND, Action, EnvConfig, Prediction, State
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 
@@ -122,3 +122,39 @@ def test_planner_parse_failure_after_retries(tmp_path, monkeypatch):
     action, belief, meta = planner.draft(TASK, [], None)
     assert action is None and belief is None
     assert meta["calls"] == 3 and meta["n_parse_retries"] == 2
+
+
+class FakeEnsemble:
+    """Stands in for lucid.wm.Ensemble: predict() returns a canned Prediction."""
+
+    def __init__(self, next_state, validity_prob=0.9):
+        self.next_state = next_state
+        self.validity_prob = validity_prob
+
+    def predict(self, state, action):
+        return Prediction(
+            validity_prob=self.validity_prob,
+            point_next_state=self.next_state,
+            disagreement=0.0,
+            per_var_disagreement={},
+            entropy=0.0,
+            next_state_dist={},
+        )
+
+
+def test_checker_ok_on_agreement():
+    s = State("shelf_a", ("receiving", HAND))
+    ok, note, wm_state = Checker(FakeEnsemble(s)).check(
+        State("shelf_a", ("receiving", "shelf_a")), Action("pick", 1), s
+    )
+    assert ok and note is None and wm_state == s
+
+
+def test_checker_note_on_disagreement():
+    wm = State("shelf_a", ("receiving", "shelf_a"))  # pick failed per WM
+    belief = State("shelf_a", ("receiving", HAND))
+    ok, note, wm_state = Checker(FakeEnsemble(wm, validity_prob=0.03)).check(
+        State("shelf_a", ("receiving", "shelf_a")), Action("pick", 1), belief
+    )
+    assert not ok and wm_state == wm
+    assert "box_1" in note and "0.03" in note

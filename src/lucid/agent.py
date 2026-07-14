@@ -161,3 +161,35 @@ class Planner:
                     },
                 ]
         return None, None, meta
+
+
+class Checker:
+    """Diffs the world model's prediction against the planner's asserted belief."""
+
+    def __init__(self, ensemble):
+        self.ensemble = ensemble
+
+    def check(
+        self, prev_belief: State, action: Action, belief: State
+    ) -> tuple[bool, str | None, State]:
+        """Returns (ok, revision_note, wm_predicted_state). Never sees the true state."""
+        pred = self.ensemble.predict(prev_belief, action)
+        wm_state = pred.point_next_state
+        if wm_state == belief:
+            return True, None, wm_state
+        diffs = []
+        if wm_state.robot_zone != belief.robot_zone:
+            diffs.append(
+                f"robot_zone: world model says {wm_state.robot_zone!r}, "
+                f"you said {belief.robot_zone!r}"
+            )
+        for i, (w, b) in enumerate(zip(wm_state.box_zones, belief.box_zones)):
+            if w != b:
+                diffs.append(f"box_{i}: world model says {w!r}, you said {b!r}")
+        note = (
+            f"Your believed state disagrees with a trained world model "
+            f"(action validity estimate {pred.validity_prob:.2f}). "
+            + "; ".join(diffs)
+            + ". Reconsider your action and belief."
+        )
+        return False, note, wm_state
