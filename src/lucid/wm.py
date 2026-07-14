@@ -253,3 +253,40 @@ def load_ensemble(path: Path) -> Ensemble:
         m.eval()
         models.append(m)
     return Ensemble(models, caps)
+
+
+def reliability_plot(conf: np.ndarray, correct: np.ndarray, path: Path, n_bins: int = 15) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    bins = np.minimum((conf * n_bins).astype(int), n_bins - 1)
+    centers, accs = [], []
+    for b in range(n_bins):
+        m = bins == b
+        if m.any():
+            centers.append(conf[m].mean())
+            accs.append(correct[m].mean())
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1], "k--", label="perfect")
+    ax.plot(centers, accs, "o-", label="model")
+    ax.set(xlabel="confidence", ylabel="accuracy", title="Reliability (per-variable next-state)")
+    ax.legend()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def separation_plot(scores_id: np.ndarray, scores_novel: np.ndarray, path: Path) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.hist(scores_id, bins=30, alpha=0.6, density=True, label="in-distribution")
+    ax.hist(scores_novel, bins=30, alpha=0.6, density=True, label="novel config")
+    ax.set(xlabel="ensemble disagreement", ylabel="density", title="Uncertainty separates novel states")
+    ax.legend()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)

@@ -16,7 +16,10 @@ from lucid.wm import (
     load_dataset,
     load_ensemble,
     loss_fn,
+    per_variable_confidence,
+    reliability_plot,
     save_ensemble,
+    separation_plot,
     train_model,
 )
 
@@ -96,3 +99,12 @@ def test_save_load_round_trip(tmp_path):
     p1, p2 = ens.predict(s, a), ens2.predict(s, a)
     assert p1.point_next_state == p2.point_next_state
     assert p1.validity_prob == pytest.approx(p2.validity_prob)
+
+
+def test_plots_write_files(tmp_path):
+    x, valid, y = _tiny_data(tmp_path)
+    ens = _tiny_ensemble(tmp_path)
+    conf, correct = per_variable_confidence(ens, x, y)
+    reliability_plot(conf, correct, tmp_path / "rel.png")
+    separation_plot(np.array([0.0, 0.1]), np.array([0.5, 0.9]), tmp_path / "sep.png")
+    assert (tmp_path / "rel.png").exists() and (tmp_path / "sep.png").exists()
