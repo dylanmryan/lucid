@@ -1,7 +1,16 @@
 import random
 
 from lucid.core import HAND, Action, EnvConfig, State
-from lucid.env import all_actions, is_valid, transition, valid_actions
+from lucid.env import (
+    WarehouseEnv,
+    all_actions,
+    goals_met,
+    is_valid,
+    make_task,
+    solve,
+    transition,
+    valid_actions,
+)
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 S = State("receiving", ("receiving", "shelf_a"))
@@ -39,8 +48,6 @@ def test_action_enumeration():
 
 
 def test_solver_reaches_goals():
-    from lucid.env import WarehouseEnv, goals_met, make_task, solve
-
     for seed in range(50):
         state, goals = make_task(CFG, random.Random(seed))
         for a in solve(state, goals, CFG):
@@ -50,8 +57,6 @@ def test_solver_reaches_goals():
 
 
 def test_env_deterministic():
-    from lucid.env import WarehouseEnv
-
     def run():
         env = WarehouseEnv(CFG)
         s, _ = env.reset(seed=3)
@@ -66,8 +71,6 @@ def test_env_deterministic():
 
 
 def test_env_terminates_at_max_steps():
-    from lucid.env import WarehouseEnv
-
     env = WarehouseEnv(CFG)
     env.reset(seed=1)
     done = False
