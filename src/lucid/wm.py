@@ -139,7 +139,9 @@ class Ensemble:
             for k, n in enumerate(active)
         }
         diff = (member_idx[:, : 1 + n_boxes] != point_idx[: 1 + n_boxes]).any(-1)
-        ent = float(np.mean([-(mean_probs[n] * np.log(mean_probs[n] + 1e-9)).sum() for n in active]))
+        ent = float(
+            np.mean([-(mean_probs[n] * np.log(mean_probs[n] + 1e-9)).sum() for n in active])
+        )
         return Prediction(
             validity_prob=float(v.mean()),
             point_next_state=point,
@@ -286,7 +288,9 @@ def separation_plot(scores_id: np.ndarray, scores_novel: np.ndarray, path: Path)
     fig, ax = plt.subplots()
     ax.hist(scores_id, bins=30, alpha=0.6, density=True, label="in-distribution")
     ax.hist(scores_novel, bins=30, alpha=0.6, density=True, label="novel config")
-    ax.set(xlabel="ensemble disagreement", ylabel="density", title="Uncertainty separates novel states")
+    ax.set(
+        xlabel="ensemble disagreement", ylabel="density", title="Uncertainty separates novel states"
+    )
     ax.legend()
     fig.savefig(path, dpi=150)
     plt.close(fig)

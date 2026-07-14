@@ -157,4 +157,6 @@ def write_splits(table: pa.Table, out_dir: Path) -> None:
     bucket = [e % 10 for e in table.column("episode_id").to_pylist()]
     splits = {"test": lambda b: b == 0, "val": lambda b: b == 1, "train": lambda b: b >= 2}
     for name, keep in splits.items():
-        pq.write_table(table.filter(pa.array([keep(b) for b in bucket])), out_dir / f"{name}.parquet")
+        pq.write_table(
+            table.filter(pa.array([keep(b) for b in bucket])), out_dir / f"{name}.parquet"
+        )
