@@ -1,7 +1,16 @@
 import numpy as np
 import pytest
 
-from lucid.core import HAND, Action, EnvConfig, State, decode_state, encode, encoding_dim, target_indices
+from lucid.core import (
+    HAND,
+    Action,
+    EnvConfig,
+    State,
+    decode_state,
+    encode,
+    encoding_dim,
+    target_indices,
+)
 
 
 def test_config_zones_and_boxes():
