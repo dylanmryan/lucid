@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 lucid-gen-rollouts = "lucid.cli:gen_rollouts_main"
 lucid-train-wm = "lucid.cli:train_wm_main"
+lucid-run-agent = "lucid.cli:run_agent_main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.5"]

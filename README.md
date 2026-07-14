@@ -11,6 +11,7 @@ and a factored MLP ensemble world model with calibrated uncertainty.
     uv sync
     uv run lucid-gen-rollouts
     uv run lucid-train-wm
+    uv run lucid-run-agent    # needs ANTHROPIC_API_KEY on first run; cached afterwards
     uv run pytest
 
 Design docs: `docs/superpowers/specs/`.

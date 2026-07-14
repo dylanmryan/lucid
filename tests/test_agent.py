@@ -11,6 +11,7 @@ from lucid.agent import (
     Planner,
     Task,
     parse_reply,
+    run_arm,
     run_episode,
     summarize,
     system_prompt,
@@ -251,3 +252,28 @@ def test_summarize_perfect(tmp_path, monkeypatch):
     assert s["success_rate"] == 1.0
     assert s["parse_failure_rate"] == 0.0
     assert s["mean_first_divergence_step"] is None
+
+
+def test_run_arm_writes_outputs(tmp_path, monkeypatch):
+    replies = scripted_replies(CFG, seed=11 * 100_000) + scripted_replies(
+        CFG, seed=11 * 100_000 + 1
+    )
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    agent_cfg = {
+        "model": "test-model",
+        "max_parse_retries": 2,
+        "max_revisions": 2,
+        "cache_dir": str(tmp_path / "cache"),
+    }
+    run_cfg = {
+        "env": {"n_boxes": 2, "n_shelves": 2, "max_steps": 30},
+        "n_episodes": 2,
+        "seed": 11,
+        "wm_checkpoint": "unused",
+        "out_dir": str(tmp_path / "out"),
+    }
+    summary = run_arm("ungated", run_cfg, agent_cfg)
+    assert (tmp_path / "out" / "ungated.parquet").exists()
+    assert summary["n_episodes"] == 2
+    assert summary["arm"] == "ungated"

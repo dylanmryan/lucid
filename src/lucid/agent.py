@@ -298,3 +298,37 @@ def summarize(episodes: list[tuple[list[dict], bool]]) -> dict:
         "tokens_in": sum(r["tokens_in"] for r in rows),
         "tokens_out": sum(r["tokens_out"] for r in rows),
     }
+
+
+def run_arm(arm: str, run_cfg: dict, agent_cfg: dict) -> dict:
+    """Run one arm over n_episodes; writes <out_dir>/<arm>.parquet, returns the summary dict."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from lucid.env import WarehouseEnv
+    from lucid.wm import load_ensemble
+
+    env_cfg = EnvConfig(**run_cfg["env"])
+    env = WarehouseEnv(env_cfg)
+    llm = CachedLLM(agent_cfg["model"], Path(agent_cfg["cache_dir"]))
+    planner = Planner(llm, env_cfg, agent_cfg["max_parse_retries"])
+    checker = (
+        Checker(load_ensemble(Path(run_cfg["wm_checkpoint"]))) if arm == "always_check" else None
+    )
+    episodes = []
+    for i in range(run_cfg["n_episodes"]):
+        episodes.append(
+            run_episode(
+                env, planner, checker, run_cfg["seed"] * 100_000 + i, agent_cfg["max_revisions"]
+            )
+        )
+    out_dir = Path(run_cfg["out_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = [r for ep, _ in episodes for r in ep]
+    table = pa.table({k: [r[k] for r in rows] for k in rows[0]})
+    pq.write_table(table, out_dir / f"{arm}.parquet")
+    return summarize(episodes) | {
+        "arm": arm,
+        "llm_cache_hits": llm.hits,
+        "llm_cache_misses": llm.misses,
+    }
