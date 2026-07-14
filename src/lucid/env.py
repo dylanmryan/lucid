@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from lucid.core import HAND, Action, EnvConfig, State
 
@@ -102,3 +106,53 @@ class WarehouseEnv:
         self.steps += 1
         done = goals_met(self.state, self.goals) or self.steps >= self.cfg.max_steps
         return self.state, valid, done
+
+
+POLICY_MIX = (("random_valid", 0.4), ("random_any", 0.3), ("scripted", 0.3))
+
+
+def _episode(env: WarehouseEnv, seed: int, policy: str, rng: random.Random) -> list[tuple]:
+    rows = []
+    state, goals = env.reset(seed)
+    script = solve(state, goals, env.cfg) if policy == "scripted" else None
+    for step in range(env.cfg.max_steps):
+        if policy == "scripted":
+            if step >= len(script):
+                break
+            action = script[step]
+        elif policy == "random_valid":
+            action = rng.choice(valid_actions(state, env.cfg))
+        else:  # random_any: includes invalid actions on purpose
+            action = rng.choice(all_actions(env.cfg))
+        next_state, valid, done = env.step(action)
+        rows.append(
+            (seed, step, state.to_json(), action.to_json(), valid, next_state.to_json(), policy)
+        )
+        state = next_state
+        if done:
+            break
+    return rows
+
+
+def generate_rollouts(
+    cfg: EnvConfig, n_episodes: int, seed: int, policy_mix=POLICY_MIX
+) -> pa.Table:
+    rng = random.Random(seed)
+    env = WarehouseEnv(cfg)
+    policies = [p for p, _ in policy_mix]
+    weights = [w for _, w in policy_mix]
+    rows = []
+    for ep in range(n_episodes):
+        policy = rng.choices(policies, weights)[0]
+        rows.extend(_episode(env, seed * 100_000 + ep, policy, rng))
+    names = ["episode_id", "step", "state", "action", "valid", "next_state", "policy_tag"]
+    return pa.table(dict(zip(names, map(list, zip(*rows)))))
+
+
+def write_splits(table: pa.Table, out_dir: Path) -> None:
+    """Split by episode (never by transition): last digit of episode id buckets 10 ways."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bucket = [e % 10 for e in table.column("episode_id").to_pylist()]
+    splits = {"test": lambda b: b == 0, "val": lambda b: b == 1, "train": lambda b: b >= 2}
+    for name, keep in splits.items():
+        pq.write_table(table.filter(pa.array([keep(b) for b in bucket])), out_dir / f"{name}.parquet")
