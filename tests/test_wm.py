@@ -1,9 +1,21 @@
+import numpy as np
 import pyarrow.parquet as pq
 import torch
 
 from lucid.core import Action, EnvConfig, State
 from lucid.env import generate_rollouts
-from lucid.wm import Ensemble, TransitionModel, load_dataset, loss_fn, train_model
+from lucid.wm import (
+    Ensemble,
+    TransitionModel,
+    disagreement_scores,
+    ece,
+    entropy_scores,
+    evaluate,
+    auroc,
+    load_dataset,
+    loss_fn,
+    train_model,
+)
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 CAPS = EnvConfig(n_boxes=3, n_shelves=3)
@@ -45,3 +57,29 @@ def test_predict_fields(tmp_path):
     assert set(p.per_var_disagreement) == {"robot_zone", "box_0", "box_1"}
     assert 0.0 <= p.disagreement <= 1.0 and p.entropy >= 0.0
     assert p.next_state_dist["box_0"].shape == (len(CAPS.zones) + 1,)
+
+
+def test_auroc_known_value():
+    # classic example: 3 of 4 pos/neg pairs correctly ranked
+    assert auroc(np.array([0, 0, 1, 1]), np.array([0.1, 0.4, 0.35, 0.8])) == 0.75
+
+
+def test_auroc_handles_ties():
+    assert auroc(np.array([0, 1]), np.array([0.5, 0.5])) == 0.5
+
+
+def test_ece_well_calibrated_bucket():
+    conf = np.array([0.8] * 10)
+    correct = np.array([1.0] * 8 + [0.0] * 2)
+    assert ece(conf, correct) < 0.011
+
+
+def test_evaluate_and_novelty_scores(tmp_path):
+    x, valid, y = _tiny_data(tmp_path)
+    ens = _tiny_ensemble(tmp_path)
+    m = evaluate(ens, x, valid, y)
+    assert set(m) == {"validity_auroc", "next_state_exact_match", "ece"}
+    assert all(0.0 <= v <= 1.0 for v in m.values())
+    d = disagreement_scores(ens, x, y)
+    e = entropy_scores(ens, x, y)
+    assert d.shape == e.shape == (len(x),)

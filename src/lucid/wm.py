@@ -153,3 +153,85 @@ def train_ensemble(
     x: torch.Tensor, valid: torch.Tensor, y: torch.Tensor, caps: EnvConfig, k: int = 5, **kw
 ) -> Ensemble:
     return Ensemble([train_model(x, valid, y, caps, seed=s, **kw) for s in range(k)], caps)
+
+
+def auroc(labels: np.ndarray, scores: np.ndarray) -> float:
+    """Rank-based AUROC with average ranks for ties."""
+    order = np.argsort(scores)
+    s = scores[order]
+    ranks = np.empty(len(s))
+    i = 0
+    while i < len(s):
+        j = i
+        while j + 1 < len(s) and s[j + 1] == s[i]:
+            j += 1
+        ranks[i : j + 1] = (i + j) / 2 + 1
+        i = j + 1
+    r = np.empty(len(s))
+    r[order] = ranks
+    pos = labels.astype(bool)
+    n1, n0 = pos.sum(), (~pos).sum()
+    return float((r[pos].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+
+def ece(confidences: np.ndarray, correct: np.ndarray, n_bins: int = 15) -> float:
+    bins = np.minimum((confidences * n_bins).astype(int), n_bins - 1)
+    e = 0.0
+    for b in range(n_bins):
+        m = bins == b
+        if m.any():
+            e += m.mean() * abs(correct[m].mean() - confidences[m].mean())
+    return float(e)
+
+
+def _mean_probs(ens: Ensemble, x: torch.Tensor):
+    v, r, boxes = ens.forward_batch(x)
+    return v.mean(0).numpy(), [r.mean(0).numpy()] + [b.mean(0).numpy() for b in boxes]
+
+
+def per_variable_confidence(ens: Ensemble, x: torch.Tensor, y: torch.Tensor):
+    """Confidence (max mean-prob) and correctness for every active variable prediction."""
+    _, probs = _mean_probs(ens, x)
+    yn = y.numpy()
+    conf, correct = [], []
+    for k, p in enumerate(probs):
+        m = yn[:, k] >= 0
+        conf.append(p[m].max(-1))
+        correct.append((p[m].argmax(-1) == yn[m, k]).astype(float))
+    return np.concatenate(conf), np.concatenate(correct)
+
+
+def evaluate(ens: Ensemble, x: torch.Tensor, valid: torch.Tensor, y: torch.Tensor) -> dict:
+    mean_v, probs = _mean_probs(ens, x)
+    yn = y.numpy()
+    active = yn >= 0
+    preds = np.stack([p.argmax(-1) for p in probs], 1)
+    exact = ((preds == yn) | ~active).all(1)
+    conf, correct = per_variable_confidence(ens, x, y)
+    return {
+        "validity_auroc": auroc(valid.numpy(), mean_v),
+        "next_state_exact_match": float(exact.mean()),
+        "ece": ece(conf, correct),
+    }
+
+
+@torch.no_grad()
+def disagreement_scores(ens: Ensemble, x: torch.Tensor, y: torch.Tensor) -> np.ndarray:
+    """Per transition: fraction of members whose decoded state differs from the point prediction.
+
+    Masked to active variables — inactive heads are untrained noise and would drown the signal.
+    """
+    _, r, boxes = ens.forward_batch(x)
+    member = torch.stack([r.argmax(-1)] + [b.argmax(-1) for b in boxes], -1)  # (K, B, V)
+    point = torch.stack([r.mean(0).argmax(-1)] + [b.mean(0).argmax(-1) for b in boxes], -1)
+    active = (y >= 0).unsqueeze(0)
+    diff = (member != point.unsqueeze(0)) & active
+    return diff.any(-1).float().mean(0).numpy()
+
+
+def entropy_scores(ens: Ensemble, x: torch.Tensor, y: torch.Tensor) -> np.ndarray:
+    """Per transition: mean predictive entropy over active variables (nats)."""
+    _, probs = _mean_probs(ens, x)
+    ent = np.stack([-(p * np.log(p + 1e-9)).sum(-1) for p in probs], 1)
+    active = (y >= 0).numpy()
+    return (ent * active).sum(1) / active.sum(1)
