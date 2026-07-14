@@ -1,0 +1,77 @@
+"""LLM planner: cached LiteLLM calls, belief tracking, draft->check->revise loop."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+
+from lucid.core import HAND, Action, EnvConfig, State
+
+
+@dataclass(frozen=True)
+class Task:
+    initial: State
+    goals: dict[int, str]
+
+
+def system_prompt(cfg: EnvConfig) -> str:
+    zones = ", ".join(cfg.zones)
+    return (
+        f"You control a warehouse robot. Zones: {zones}. "
+        f"Boxes are box_0..box_{cfg.n_boxes - 1}. The robot holds at most one box.\n"
+        "Actions and preconditions:\n"
+        '- {"kind": "move", "target": "<zone>"} — valid unless already in that zone.\n'
+        '- {"kind": "pick", "target": <box index>} — valid iff the robot is in that box\'s zone '
+        "and holds nothing.\n"
+        '- {"kind": "place", "target": null} — puts the held box in the current zone; '
+        "valid iff holding a box.\n"
+        "Invalid actions do nothing.\n"
+        "After each action you are told ONLY whether it was valid — never the state. "
+        "Track the state yourself.\n"
+        "Reply with EXACTLY one JSON object and nothing else:\n"
+        '{"action": {"kind": "...", "target": ...}, '
+        '"believed_next_state": {"robot_zone": "<zone>", "box_zones": ["<zone or hand>", ...]}}\n'
+        f'"box_zones" lists all {cfg.n_boxes} boxes in index order; "hand" means held.'
+    )
+
+
+def user_message(task: Task, history: list[str], note: str | None) -> str:
+    goals = ", ".join(f"box_{i} -> {z}" for i, z in sorted(task.goals.items()))
+    lines = [f"Goals: {goals}", f"Initial state: {task.initial.to_json()}"]
+    if history:
+        lines.append("History:")
+        lines.extend(history)
+    if note:
+        lines.append(f"Checker note: {note}")
+    lines.append("Next action?")
+    return "\n".join(lines)
+
+
+def parse_reply(text: str, cfg: EnvConfig) -> tuple[Action, State]:
+    """Strict parse of the model reply; raises ValueError/KeyError/TypeError on anything off."""
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        raise ValueError("no JSON object found")
+    d = json.loads(m.group())
+    a = d["action"]
+    kind = a["kind"]
+    if kind not in ("move", "pick", "place"):
+        raise ValueError(f"bad action kind: {kind!r}")
+    target = a.get("target")
+    if kind == "move" and target not in cfg.zones:
+        raise ValueError(f"bad move target: {target!r}")
+    if kind == "pick" and not (isinstance(target, int) and 0 <= target < cfg.n_boxes):
+        raise ValueError(f"bad pick target: {target!r}")
+    if kind == "place":
+        target = None
+    b = d["believed_next_state"]
+    robot_zone = b["robot_zone"]
+    box_zones = b["box_zones"]
+    if robot_zone not in cfg.zones:
+        raise ValueError(f"bad robot_zone: {robot_zone!r}")
+    if len(box_zones) != cfg.n_boxes:
+        raise ValueError(f"expected {cfg.n_boxes} box_zones, got {len(box_zones)}")
+    if any(z != HAND and z not in cfg.zones for z in box_zones):
+        raise ValueError(f"bad box_zones: {box_zones!r}")
+    return Action(kind, target), State(robot_zone, tuple(box_zones))
