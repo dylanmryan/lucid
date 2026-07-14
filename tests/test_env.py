@@ -1,3 +1,5 @@
+import random
+
 from lucid.core import HAND, Action, EnvConfig, State
 from lucid.env import all_actions, is_valid, transition, valid_actions
 
@@ -34,3 +36,41 @@ def test_action_enumeration():
     assert len(all_actions(CFG)) == 5 + 2 + 1  # moves + picks + place
     assert all(is_valid(S, a, CFG) for a in valid_actions(S, CFG))
     assert Action("pick", 0) in valid_actions(S, CFG)
+
+
+def test_solver_reaches_goals():
+    from lucid.env import WarehouseEnv, goals_met, make_task, solve
+
+    for seed in range(50):
+        state, goals = make_task(CFG, random.Random(seed))
+        for a in solve(state, goals, CFG):
+            state, valid = transition(state, a, CFG)
+            assert valid
+        assert goals_met(state, goals)
+
+
+def test_env_deterministic():
+    from lucid.env import WarehouseEnv
+
+    def run():
+        env = WarehouseEnv(CFG)
+        s, _ = env.reset(seed=3)
+        traj = [s]
+        rng = random.Random(0)
+        for _ in range(10):
+            s, _, _ = env.step(rng.choice(all_actions(CFG)))
+            traj.append(s)
+        return traj
+
+    assert run() == run()
+
+
+def test_env_terminates_at_max_steps():
+    from lucid.env import WarehouseEnv
+
+    env = WarehouseEnv(CFG)
+    env.reset(seed=1)
+    done = False
+    for _ in range(CFG.max_steps):
+        _, _, done = env.step(Action("place"))  # keep issuing a no-op forever
+    assert done
