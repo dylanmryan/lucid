@@ -1,5 +1,6 @@
 import numpy as np
 import pyarrow.parquet as pq
+import pytest
 import torch
 
 from lucid.core import Action, EnvConfig, State
@@ -13,7 +14,9 @@ from lucid.wm import (
     evaluate,
     auroc,
     load_dataset,
+    load_ensemble,
     loss_fn,
+    save_ensemble,
     train_model,
 )
 
@@ -83,3 +86,13 @@ def test_evaluate_and_novelty_scores(tmp_path):
     d = disagreement_scores(ens, x, y)
     e = entropy_scores(ens, x, y)
     assert d.shape == e.shape == (len(x),)
+
+
+def test_save_load_round_trip(tmp_path):
+    ens = _tiny_ensemble(tmp_path)
+    save_ensemble(ens, tmp_path / "wm.pt")
+    ens2 = load_ensemble(tmp_path / "wm.pt")
+    s, a = State("receiving", ("receiving", "shelf_a")), Action("pick", 0)
+    p1, p2 = ens.predict(s, a), ens2.predict(s, a)
+    assert p1.point_next_state == p2.point_next_state
+    assert p1.validity_prob == pytest.approx(p2.validity_prob)

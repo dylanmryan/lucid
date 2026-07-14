@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -235,3 +236,20 @@ def entropy_scores(ens: Ensemble, x: torch.Tensor, y: torch.Tensor) -> np.ndarra
     ent = np.stack([-(p * np.log(p + 1e-9)).sum(-1) for p in probs], 1)
     active = (y >= 0).numpy()
     return (ent * active).sum(1) / active.sum(1)
+
+
+def save_ensemble(ens: Ensemble, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"caps": asdict(ens.caps), "models": [m.state_dict() for m in ens.models]}, path)
+
+
+def load_ensemble(path: Path) -> Ensemble:
+    d = torch.load(path, weights_only=True)
+    caps = EnvConfig(**d["caps"])
+    models = []
+    for sd in d["models"]:
+        m = TransitionModel(caps)
+        m.load_state_dict(sd)
+        m.eval()
+        models.append(m)
+    return Ensemble(models, caps)
