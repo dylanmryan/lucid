@@ -1,0 +1,27 @@
+[env]
+n_boxes = 4
+n_shelves = 3
+max_steps = 40
+
+[novel_env]           # never seen in training; probes the uncertainty head
+n_boxes = 7
+n_shelves = 5
+max_steps = 40
+
+[caps]                # encoder sizing; must be >= both env and novel_env
+n_boxes = 8
+n_shelves = 6
+max_steps = 40
+
+[rollouts]
+n_episodes = 3000
+n_novel_episodes = 300
+seed = 7
+out_dir = "data/rollouts"
+
+[train]
+k = 5
+epochs = 30
+lr = 1e-3
+batch = 256
+out_dir = "data/wm"
