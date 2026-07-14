@@ -277,3 +277,21 @@ def test_run_arm_writes_outputs(tmp_path, monkeypatch):
     assert (tmp_path / "out" / "ungated.parquet").exists()
     assert summary["n_episodes"] == 2
     assert summary["arm"] == "ungated"
+
+
+def test_run_agent_main_rejects_unknown_arm(tmp_path, monkeypatch):
+    import sys
+
+    cfg = tmp_path / "c.toml"
+    cfg.write_text(
+        '[agent]\nmodel = "test-model"\nmax_parse_retries = 2\nmax_revisions = 2\n'
+        f'cache_dir = "{tmp_path}/cache"\n'
+        "[run]\nenv = { n_boxes = 2, n_shelves = 2, max_steps = 30 }\n"
+        'n_episodes = 1\nseed = 1\narms = ["ungated", "always_check"]\n'
+        f'wm_checkpoint = "unused"\nout_dir = "{tmp_path}/out"\n'
+    )
+    monkeypatch.setattr(sys, "argv", ["lucid-run-agent", "--config", str(cfg), "--arm", "typo"])
+    from lucid.cli import run_agent_main
+
+    with pytest.raises(SystemExit):
+        run_agent_main()

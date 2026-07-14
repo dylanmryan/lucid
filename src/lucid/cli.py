@@ -81,6 +81,9 @@ def run_agent_main() -> None:
 
     cfg, arm = _cfg_and_arm("configs/w2.toml")
     arms = [arm] if arm else cfg["run"]["arms"]
+    bad = [a for a in arms if a not in cfg["run"]["arms"]]
+    if bad:
+        raise SystemExit(f"--arm must be one of {cfg['run']['arms']}, got {bad}")
     summaries = {a: run_arm(a, cfg["run"], cfg["agent"]) for a in arms}
     out = Path(cfg["run"]["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
