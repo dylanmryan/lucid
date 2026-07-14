@@ -1,6 +1,8 @@
 import pytest
+from types import SimpleNamespace
 
-from lucid.agent import Task, parse_reply, system_prompt, user_message
+import lucid.agent as agent_mod
+from lucid.agent import CachedLLM, Task, parse_reply, system_prompt, user_message
 from lucid.core import HAND, Action, EnvConfig, State
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
@@ -62,3 +64,30 @@ def test_user_message_includes_history_and_note():
     assert "box_0 -> shelf_b" in msg
     assert "pick" in msg and "-> valid" in msg
     assert "Checker note: wm disagrees" in msg
+
+
+def fake_completion_factory(replies: list[str], counter: dict):
+    def fake(model, messages, temperature):
+        counter["calls"] += 1
+        text = replies[min(counter["calls"] - 1, len(replies) - 1)]
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+        )
+
+    return fake
+
+
+def test_cached_llm_caches(tmp_path, monkeypatch):
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(["hi"], counter))
+    llm = CachedLLM("test-model", tmp_path)
+    messages = [{"role": "user", "content": "x"}]
+    r1 = llm.complete(messages)
+    r2 = llm.complete(messages)
+    assert counter["calls"] == 1  # second call served from disk
+    assert r1["text"] == r2["text"] == "hi"
+    assert r1["cache_hit"] is False and r2["cache_hit"] is True
+    assert (llm.hits, llm.misses) == (1, 1)
+    r3 = llm.complete([{"role": "user", "content": "different"}])
+    assert counter["calls"] == 2 and r3["cache_hit"] is False

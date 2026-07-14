@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
+
+import litellm
 
 from lucid.core import HAND, Action, EnvConfig, State
 
@@ -77,3 +81,35 @@ def parse_reply(text: str, cfg: EnvConfig) -> tuple[Action, State]:
     if any(z != HAND and z not in cfg.zones for z in box_zones):
         raise ValueError(f"bad box_zones: {box_zones!r}")
     return Action(kind, target), State(robot_zone, tuple(box_zones))
+
+
+class CachedLLM:
+    """LiteLLM wrapper with a content-addressed disk cache. Cache hit -> zero network."""
+
+    def __init__(self, model: str, cache_dir: Path):
+        self.model = model
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.hits = 0
+        self.misses = 0
+
+    def complete(self, messages: list[dict]) -> dict:
+        """Returns {"text", "tokens_in", "tokens_out", "cache_hit"}."""
+        key = hashlib.sha256(
+            json.dumps(
+                {"model": self.model, "messages": messages, "temperature": 0}, sort_keys=True
+            ).encode()
+        ).hexdigest()
+        path = self.cache_dir / f"{key}.json"
+        if path.exists():
+            self.hits += 1
+            return json.loads(path.read_text()) | {"cache_hit": True}
+        resp = litellm.completion(model=self.model, messages=messages, temperature=0)
+        out = {
+            "text": resp.choices[0].message.content,
+            "tokens_in": resp.usage.prompt_tokens,
+            "tokens_out": resp.usage.completion_tokens,
+        }
+        path.write_text(json.dumps(out))
+        self.misses += 1
+        return out | {"cache_hit": False}
