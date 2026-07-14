@@ -61,7 +61,9 @@ def parse_reply(text: str, cfg: EnvConfig) -> tuple[Action, State]:
     target = a.get("target")
     if kind == "move" and target not in cfg.zones:
         raise ValueError(f"bad move target: {target!r}")
-    if kind == "pick" and not (isinstance(target, int) and 0 <= target < cfg.n_boxes):
+    if kind == "pick" and not (
+        isinstance(target, int) and not isinstance(target, bool) and 0 <= target < cfg.n_boxes
+    ):
         raise ValueError(f"bad pick target: {target!r}")
     if kind == "place":
         target = None
