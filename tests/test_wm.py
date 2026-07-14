@@ -1,9 +1,9 @@
 import pyarrow.parquet as pq
 import torch
 
-from lucid.core import EnvConfig
+from lucid.core import Action, EnvConfig, State
 from lucid.env import generate_rollouts
-from lucid.wm import TransitionModel, load_dataset, loss_fn, train_model
+from lucid.wm import Ensemble, TransitionModel, load_dataset, loss_fn, train_model
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 CAPS = EnvConfig(n_boxes=3, n_shelves=3)
@@ -30,3 +30,18 @@ def test_training_learns(tmp_path):
     model = train_model(x, valid, y, CAPS, seed=0, epochs=20)
     after = loss_fn(model, x, valid, y).item()
     assert after < before / 2
+
+
+def _tiny_ensemble(tmp_path, k=2):
+    x, valid, y = _tiny_data(tmp_path)
+    return Ensemble([train_model(x, valid, y, CAPS, seed=s, epochs=5) for s in range(k)], CAPS)
+
+
+def test_predict_fields(tmp_path):
+    ens = _tiny_ensemble(tmp_path)
+    p = ens.predict(State("receiving", ("receiving", "shelf_a")), Action("pick", 0))
+    assert 0.0 <= p.validity_prob <= 1.0
+    assert isinstance(p.point_next_state, State) and len(p.point_next_state.box_zones) == 2
+    assert set(p.per_var_disagreement) == {"robot_zone", "box_0", "box_1"}
+    assert 0.0 <= p.disagreement <= 1.0 and p.entropy >= 0.0
+    assert p.next_state_dist["box_0"].shape == (len(CAPS.zones) + 1,)

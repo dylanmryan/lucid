@@ -9,7 +9,16 @@ import pyarrow.parquet as pq
 import torch
 from torch import nn
 
-from lucid.core import Action, EnvConfig, State, encode, encoding_dim, target_indices
+from lucid.core import (
+    Action,
+    EnvConfig,
+    Prediction,
+    State,
+    decode_state,
+    encode,
+    encoding_dim,
+    target_indices,
+)
 
 
 class TransitionModel(nn.Module):
@@ -86,3 +95,61 @@ def train_model(
             opt.step()
     model.eval()
     return model
+
+
+def var_names(caps: EnvConfig) -> list[str]:
+    return ["robot_zone"] + [f"box_{i}" for i in range(caps.n_boxes)]
+
+
+class Ensemble:
+    def __init__(self, models: list[TransitionModel], caps: EnvConfig):
+        self.models = models
+        self.caps = caps
+
+    @torch.no_grad()
+    def forward_batch(self, x: torch.Tensor):
+        """Stacked member outputs: v (K,B), robot (K,B,Z), boxes list of (K,B,Z+1)."""
+        vs, rs, bs = [], [], []
+        for m in self.models:
+            v, r, b = m(x)
+            vs.append(torch.sigmoid(v))
+            rs.append(r.softmax(-1))
+            bs.append([bi.softmax(-1) for bi in b])
+        boxes = [
+            torch.stack([bs[k][i] for k in range(len(self.models))])
+            for i in range(self.caps.n_boxes)
+        ]
+        return torch.stack(vs), torch.stack(rs), boxes
+
+    @torch.no_grad()
+    def predict(self, state: State, action: Action) -> Prediction:
+        n_boxes = len(state.box_zones)
+        x = torch.from_numpy(encode(state, action, self.caps)).unsqueeze(0)
+        v, r, boxes = self.forward_batch(x)
+        names = var_names(self.caps)
+        active = names[: 1 + n_boxes]
+        mean_probs = {n: p.mean(0)[0].numpy() for n, p in zip(names, [r] + boxes)}
+        idx = np.array([int(mean_probs[n].argmax()) for n in names])
+        point = decode_state(idx, n_boxes, self.caps)
+        member_idx = torch.stack([r.argmax(-1)] + [b.argmax(-1) for b in boxes], -1)[:, 0, :]
+        point_idx = torch.from_numpy(idx)
+        per_var = {
+            n: float((member_idx[:, k] != point_idx[k]).float().mean())
+            for k, n in enumerate(active)
+        }
+        diff = (member_idx[:, : 1 + n_boxes] != point_idx[: 1 + n_boxes]).any(-1)
+        ent = float(np.mean([-(mean_probs[n] * np.log(mean_probs[n] + 1e-9)).sum() for n in active]))
+        return Prediction(
+            validity_prob=float(v.mean()),
+            point_next_state=point,
+            disagreement=float(diff.float().mean()),
+            per_var_disagreement=per_var,
+            entropy=ent,
+            next_state_dist={n: mean_probs[n] for n in active},
+        )
+
+
+def train_ensemble(
+    x: torch.Tensor, valid: torch.Tensor, y: torch.Tensor, caps: EnvConfig, k: int = 5, **kw
+) -> Ensemble:
+    return Ensemble([train_model(x, valid, y, caps, seed=s, **kw) for s in range(k)], caps)
