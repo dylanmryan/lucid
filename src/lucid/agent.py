@@ -174,6 +174,7 @@ class Checker:
     ) -> tuple[bool, str | None, State]:
         """Returns (ok, revision_note, wm_predicted_state). Never sees the true state."""
         pred = self.ensemble.predict(prev_belief, action)
+        self.last_pred = pred
         wm_state = pred.point_next_state
         if wm_state == belief:
             return True, None, wm_state

@@ -1,5 +1,6 @@
-from lucid.core import EnvConfig, Prediction, State
-from lucid.gate import DoubtGate
+from lucid.core import HAND, Action, EnvConfig, Prediction, State
+from lucid.gate import DoubtGate, OracleChecker, disputed_vars
+from lucid.env import WarehouseEnv
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 
@@ -49,3 +50,23 @@ def test_theta_monotonicity():
     decisions = [DoubtGate(theta=t).decide(pred, disputed, goals)[0] for t in (0.1, 0.5, 0.9)]
     # raising theta can only turn revise into adopt, never the reverse
     assert decisions == sorted(decisions, key=lambda d: d == "adopt")
+
+
+def test_disputed_vars():
+    a = State("receiving", ("receiving", "shelf_a"))
+    b = State("staging", ("receiving", HAND))
+    assert disputed_vars(a, b) == ["robot_zone", "box_1"]
+    assert disputed_vars(a, a) == []
+
+
+def test_oracle_checker_flags_exactly_true_divergence():
+    env = WarehouseEnv(CFG)
+    state, _ = env.reset(seed=3)
+    oracle = OracleChecker(env)
+    action = Action("move", next(z for z in CFG.zones if z != state.robot_zone))
+    true_next = State(action.target, state.box_zones)
+    ok, note, ref = oracle.check(state, action, true_next)
+    assert ok and note is None and ref == true_next
+    wrong = State(state.robot_zone, state.box_zones)  # believes the move didn't happen
+    ok, note, ref = oracle.check(state, action, wrong)
+    assert not ok and "robot_zone" in note and ref == true_next
