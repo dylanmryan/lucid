@@ -210,8 +210,11 @@ def run_episode(
         action, belief, meta = planner.draft(task, history, None)
         n_revisions = 0
         wm_state = None
+        revision_parse_failure = False
         if action is None:
-            rows.append(_row(task_seed, step, env.state, None, None, None, False, 0, meta, True))
+            rows.append(
+                _row(task_seed, step, env.state, None, None, None, False, 0, meta, True, False)
+            )
             history.append(f"step {step}: PARSE FAILURE - no action executed")
             continue
         if checker is not None:
@@ -221,6 +224,7 @@ def run_episode(
                 action2, belief2, meta2 = planner.draft(task, history, note)
                 _accumulate(meta, meta2)
                 if action2 is None:
+                    revision_parse_failure = True  # stale disputed action executes below
                     break
                 action, belief = action2, belief2
                 ok, note, wm_state = checker.check(working_belief, action, belief)
@@ -241,6 +245,7 @@ def run_episode(
                 n_revisions,
                 meta,
                 False,
+                revision_parse_failure,
             )
         )
         if done:
@@ -249,7 +254,17 @@ def run_episode(
 
 
 def _row(
-    episode_id, step, true_state, belief, wm_state, action, valid, n_revisions, meta, parse_failure
+    episode_id,
+    step,
+    true_state,
+    belief,
+    wm_state,
+    action,
+    valid,
+    n_revisions,
+    meta,
+    parse_failure,
+    revision_parse_failure,
 ) -> dict:
     return {
         "episode_id": episode_id,
@@ -262,6 +277,7 @@ def _row(
         "n_revisions": n_revisions,
         "n_parse_retries": meta["n_parse_retries"],
         "parse_failure": parse_failure,
+        "revision_parse_failure": revision_parse_failure,
         "calls": meta["calls"],
         "cache_hits": meta["cache_hits"],
         "tokens_in": meta["tokens_in"],
@@ -290,6 +306,9 @@ def summarize(episodes: list[tuple[list[dict], bool]]) -> dict:
         "hallucinated_state_rate": len(hallucinated) / len(scored) if scored else 0.0,
         "success_rate": sum(s for _, s in episodes) / len(episodes) if episodes else 0.0,
         "parse_failure_rate": sum(r["parse_failure"] for r in rows) / calls if calls else 0.0,
+        "revision_parse_failure_rate": (
+            sum(r["revision_parse_failure"] for r in rows) / len(rows) if rows else 0.0
+        ),
         "invalid_action_rate": sum(not r["valid"] for r in scored) / len(scored) if scored else 0.0,
         "mean_first_divergence_step": (sum(first_div) / len(first_div)) if first_div else None,
         "calls_per_episode": calls / len(episodes) if episodes else 0.0,

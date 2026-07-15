@@ -219,6 +219,7 @@ def test_run_episode_perfect_agent(tmp_path, monkeypatch):
         "n_revisions",
         "n_parse_retries",
         "parse_failure",
+        "revision_parse_failure",
         "calls",
         "cache_hits",
         "tokens_in",
@@ -348,3 +349,23 @@ def test_checker_adopts_wm_belief_after_exhausted_revisions(tmp_path, monkeypatc
     # but planner still outputs a lie (step 1 with lied[1]), which gets corrected
     assert rows[1]["n_revisions"] == 1
     assert success is True
+
+
+def test_revision_parse_failure_flagged(tmp_path, monkeypatch):
+    correct = scripted_replies(CFG, seed=7)
+    lied = scripted_replies(CFG, seed=7, lie_at_step=0)
+    # Step 0: lie parses fine, checker disagrees, revision re-draft is garbage
+    # 3 times (exhausts parse retries) -> stale disputed action executes anyway.
+    replies = [lied[0], "garbage", "garbage", "garbage"] + correct[1:]
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), CFG)
+    checker = Checker(PerfectEnsemble(CFG))
+    rows, success = run_episode(WarehouseEnv(CFG), planner, checker, task_seed=7, max_revisions=2)
+    assert rows[0]["parse_failure"] is False  # an action did execute
+    assert rows[0]["revision_parse_failure"] is True
+    assert rows[0]["n_revisions"] == 1
+    assert rows[0]["calls"] == 4  # 1 draft + 3 wasted revision calls, now visible
+    assert all(r["revision_parse_failure"] is False for r in rows[1:])
+    summary = summarize([(rows, success)])
+    assert summary["revision_parse_failure_rate"] == 1 / len(rows)
