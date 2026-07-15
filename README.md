@@ -6,17 +6,67 @@ and flags the moment the agent's beliefs diverge from reality.
 W1: deterministic warehouse environment, rollout generator, and a factored MLP
 ensemble world model with calibrated uncertainty. W2: an LLM planner tracking
 its own beliefs open-loop, the hallucinated-state metric, and the
-draft→check→revise loop that lets the world model catch the lies.
+draft→check→revise loop that lets the world model catch the lies. W3: an
+adaptive doubt gate that spends revision calls only where they pay off, traced
+as a cost-accuracy frontier.
 
 ## Run
 
     uv sync
     uv run lucid-gen-rollouts
     uv run lucid-train-wm
-    uv run lucid-run-agent    # needs ANTHROPIC_API_KEY on first run; cached afterwards
+    uv run lucid-run-agent     # needs ANTHROPIC_API_KEY on first run; cached afterwards
+    uv run lucid-frontier      # renders the W3 frontier chart from summary.json
     uv run pytest
 
 Design docs: `docs/superpowers/specs/`.
+
+## W3 results — the adaptive doubt-budget frontier
+
+![cost-accuracy frontier](docs/assets/frontier.png)
+
+A world-model check is a free CPU forward pass; the cost is what you *do* about
+a disagreement. The `DoubtGate` scores each disagreement from the WM's
+self-confidence, its validity signal, and whether the disputed variables touch
+the goal, then chooses: **revise** (pay an LLM call), **adopt** the WM's belief
+silently (free correction), or **ignore** when the WM itself is uncertain.
+Sweeping the threshold θ traces a frontier that a single fixed policy cannot.
+
+100 episodes per arm (`configs/w3.toml`, seed 11):
+
+| arm | θ | hallucinated-state | calls/episode | extra vs. ungated |
+|---|---|---|---|---|
+| ungated | — | 13.6% | 17.62 | — |
+| **adaptive (hi)** | 0.7 | **6.3%** | 17.16 | **−2.6%** |
+| **adaptive (mid)** | 0.45 | **2.15%** | 19.25 | +9.3% |
+| adaptive (lo) | 0.2 | 1.18% | 19.81 | +12.4% |
+| always_check | — | 1.18% | 19.81 | +12.4% |
+| oracle | — | 1.22% | 18.93 | +7.4% |
+
+Two operating points fixed gating can't offer:
+
+- **adaptive (hi) is a free lunch** — it cuts hallucination by 54% (13.6% → 6.3%)
+  while making *fewer* calls than the ungated baseline, because corrected beliefs
+  let episodes finish in fewer steps. Strictly better than ungated on both axes.
+- **adaptive (mid) reaches 2.15%** — within ~1 point of always_check's floor —
+  for 74% of always_check's revision overhead.
+
+At the low-θ end the gate converges to always_check exactly (it revises on
+every disagreement), so the curve interpolates the whole span from ungated to
+fully-checked with one knob.
+
+**Honest notes.** The pre-registered target — one adaptive point with ≤ 2.5%
+hallucination at ≤ 70% of always_check's extra calls — is *narrowly missed*:
+adaptive (mid) hits 2.15% but at 74% of the overhead (a 26% saving, short of the
+30% goal). Reported as measured; θ was not re-tuned post-hoc. The **oracle**
+(perfect detection + full correction, ground-truth-peeking) lands at 1.22% —
+essentially the achievable floor for this revision mechanism, and slightly
+*cheaper* than always_check since it revises only on true divergences. That
+always_check matches it confirms the near-perfect W1 world model is an excellent
+stand-in for ground truth.
+
+New API spend for W3: ~$5.70 (the two W2 arms replay from cache for free);
+a warm rerun of every arm makes zero network calls.
 
 ## W2 results — hallucination and the check→revise loop
 
