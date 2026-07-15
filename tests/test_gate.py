@@ -1,6 +1,10 @@
 from lucid.core import HAND, Action, EnvConfig, Prediction, State
 from lucid.gate import DoubtGate, OracleChecker, disputed_vars
 from lucid.env import WarehouseEnv
+import lucid.agent as agent_mod
+from lucid.agent import CachedLLM, Checker, Planner, run_episode, summarize
+
+from tests.test_agent import PerfectEnsemble, fake_completion_factory, scripted_replies
 
 CFG = EnvConfig(n_boxes=2, n_shelves=2, max_steps=30)
 
@@ -70,3 +74,58 @@ def test_oracle_checker_flags_exactly_true_divergence():
     wrong = State(state.robot_zone, state.box_zones)  # believes the move didn't happen
     ok, note, ref = oracle.check(state, action, wrong)
     assert not ok and "robot_zone" in note and ref == true_next
+
+
+def _gated_episode(tmp_path, monkeypatch, gate, lie=True):
+    replies_correct = scripted_replies(CFG, seed=7)
+    lied = scripted_replies(CFG, seed=7, lie_at_step=0)
+    replies = ([lied[0]] + replies_correct[1:]) if lie else replies_correct
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    planner = Planner(CachedLLM("test-model", tmp_path), CFG)
+    checker = Checker(PerfectEnsemble(CFG))
+    return run_episode(WarehouseEnv(CFG), planner, checker, task_seed=7, max_revisions=2, gate=gate)
+
+
+def test_gate_adopt_records_decision_and_corrects_tracking(tmp_path, monkeypatch):
+    from lucid.gate import DoubtGate
+
+    rows, success = _gated_episode(tmp_path, monkeypatch, DoubtGate(theta=1.01))  # never revise
+    assert rows[0]["gate_decision"] == "adopt"
+    assert rows[0]["doubt"] >= 0.0
+    assert rows[0]["n_revisions"] == 0
+    assert rows[0]["believed_state"] != rows[0]["true_state"]  # assertion still counted
+    assert all(r["gate_decision"] == "" for r in rows[1:])
+    assert success is True
+
+
+def test_gate_ignore_leaves_agent_alone(tmp_path, monkeypatch):
+    from lucid.gate import DoubtGate
+
+    rows, _ = _gated_episode(
+        tmp_path, monkeypatch, DoubtGate(theta=1.01, u_max=-1.0)
+    )  # always ignore
+    assert rows[0]["gate_decision"] == "ignore"
+    assert rows[0]["n_revisions"] == 0
+
+
+def test_gate_revise_matches_always_check(tmp_path, monkeypatch):
+    from lucid.gate import DoubtGate
+
+    rows, _ = _gated_episode(tmp_path, monkeypatch, DoubtGate(theta=-1.0))  # always revise
+    assert rows[0]["gate_decision"] == "revise"
+    assert rows[0]["n_revisions"] >= 1
+
+
+def test_no_gate_rows_have_empty_decision(tmp_path, monkeypatch):
+    rows, _ = _gated_episode(tmp_path, monkeypatch, None, lie=False)
+    assert all(r["gate_decision"] == "" and r["doubt"] == -1.0 for r in rows)
+
+
+def test_summarize_gate_rates(tmp_path, monkeypatch):
+    from lucid.gate import DoubtGate
+
+    rows, success = _gated_episode(tmp_path, monkeypatch, DoubtGate(theta=1.01))
+    s = summarize([(rows, success)])
+    assert s["adopt_rate"] > 0.0
+    assert s["ignore_rate"] == 0.0

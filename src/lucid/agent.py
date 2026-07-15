@@ -197,7 +197,12 @@ class Checker:
 
 
 def run_episode(
-    env, planner: Planner, checker: Checker | None, task_seed: int, max_revisions: int = 2
+    env,
+    planner: Planner,
+    checker: Checker | None,
+    task_seed: int,
+    max_revisions: int = 2,
+    gate=None,
 ) -> tuple[list[dict], bool]:
     """One episode; returns (per-step rows, success). Agent sees only valid flags."""
     from lucid.env import goals_met  # local import to avoid a cycle at module load
@@ -212,28 +217,63 @@ def run_episode(
         n_revisions = 0
         wm_state = None
         revision_parse_failure = False
+        gate_decision = ""
+        doubt = -1.0
         if action is None:
             rows.append(
-                _row(task_seed, step, env.state, None, None, None, False, 0, meta, True, False)
+                _row(
+                    task_seed,
+                    step,
+                    env.state,
+                    None,
+                    None,
+                    None,
+                    False,
+                    0,
+                    meta,
+                    True,
+                    False,
+                    "",
+                    -1.0,
+                )
             )
             history.append(f"step {step}: PARSE FAILURE - no action executed")
             continue
         if checker is not None:
             ok, note, wm_state = checker.check(working_belief, action, belief)
-            while not ok and n_revisions < max_revisions:
-                n_revisions += 1
-                action2, belief2, meta2 = planner.draft(task, history, note)
-                _accumulate(meta, meta2)
-                if action2 is None:
-                    revision_parse_failure = True  # stale disputed action executes below
-                    break
-                action, belief = action2, belief2
-                ok, note, wm_state = checker.check(working_belief, action, belief)
-            working_belief = belief if ok else wm_state
+            decision = "revise"
+            if not ok and gate is not None:
+                from lucid.gate import disputed_vars
+
+                decision, doubt = gate.decide(
+                    checker.last_pred, disputed_vars(wm_state, belief), goals
+                )
+                gate_decision = decision
+            if not ok and decision == "revise":
+                while not ok and n_revisions < max_revisions:
+                    n_revisions += 1
+                    action2, belief2, meta2 = planner.draft(task, history, note)
+                    _accumulate(meta, meta2)
+                    if action2 is None:
+                        revision_parse_failure = True  # stale disputed action executes below
+                        break
+                    action, belief = action2, belief2
+                    ok, note, wm_state = checker.check(working_belief, action, belief)
+                working_belief = belief if ok else wm_state
+            elif not ok and decision == "adopt":
+                working_belief = wm_state
+            elif not ok:  # ignore
+                working_belief = belief
+            else:
+                working_belief = belief
         else:
             working_belief = belief
         true_state, valid, done = env.step(action)
         history.append(f"step {step}: {action.to_json()} -> {'valid' if valid else 'invalid'}")
+        if gate_decision == "adopt":
+            history.append(
+                f"note: your believed state after step {step} was corrected to {working_belief.to_json()}"
+            )
         rows.append(
             _row(
                 task_seed,
@@ -247,6 +287,8 @@ def run_episode(
                 meta,
                 False,
                 revision_parse_failure,
+                gate_decision,
+                doubt,
             )
         )
         if done:
@@ -266,6 +308,8 @@ def _row(
     meta,
     parse_failure,
     revision_parse_failure,
+    gate_decision,
+    doubt,
 ) -> dict:
     return {
         "episode_id": episode_id,
@@ -279,6 +323,8 @@ def _row(
         "n_parse_retries": meta["n_parse_retries"],
         "parse_failure": parse_failure,
         "revision_parse_failure": revision_parse_failure,
+        "gate_decision": gate_decision,
+        "doubt": doubt,
         "calls": meta["calls"],
         "cache_hits": meta["cache_hits"],
         "tokens_in": meta["tokens_in"],
@@ -314,6 +360,10 @@ def summarize(episodes: list[tuple[list[dict], bool]]) -> dict:
         "mean_first_divergence_step": (sum(first_div) / len(first_div)) if first_div else None,
         "calls_per_episode": calls / len(episodes) if episodes else 0.0,
         "revisions_per_step": sum(r["n_revisions"] for r in rows) / len(rows) if rows else 0.0,
+        "adopt_rate": sum(r["gate_decision"] == "adopt" for r in rows) / len(rows) if rows else 0.0,
+        "ignore_rate": sum(r["gate_decision"] == "ignore" for r in rows) / len(rows)
+        if rows
+        else 0.0,
         "cache_hit_rate": sum(r["cache_hits"] for r in rows) / calls if calls else 0.0,
         "tokens_in": sum(r["tokens_in"] for r in rows),
         "tokens_out": sum(r["tokens_out"] for r in rows),

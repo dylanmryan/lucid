@@ -220,6 +220,8 @@ def test_run_episode_perfect_agent(tmp_path, monkeypatch):
         "n_parse_retries",
         "parse_failure",
         "revision_parse_failure",
+        "gate_decision",
+        "doubt",
         "calls",
         "cache_hits",
         "tokens_in",
