@@ -1,0 +1,13 @@
+[agent]
+model = "claude-haiku-4-5"        # LiteLLM model string
+max_parse_retries = 2
+max_revisions = 2
+cache_dir = "data/llm_cache"
+
+[run]
+env = { n_boxes = 8, n_shelves = 5, max_steps = 60 }   # boxes/shelves = WM training config (w1.toml)
+n_episodes = 100
+seed = 11
+arms = ["ungated", "always_check"]
+wm_checkpoint = "data/wm/ensemble.pt"
+out_dir = "data/agent"

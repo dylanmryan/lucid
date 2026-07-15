@@ -26,15 +26,17 @@ from lucid.wm import (
 )
 
 
-def _cfg(default: str = "configs/w1.toml") -> dict:
+def _cfg_and_arm(default: str) -> tuple[dict, str | None]:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default=default)
-    with open(p.parse_args().config, "rb") as f:
-        return tomllib.load(f)
+    p.add_argument("--arm", default=None)
+    args = p.parse_args()
+    with open(args.config, "rb") as f:
+        return tomllib.load(f), args.arm
 
 
 def gen_rollouts_main() -> None:
-    cfg = _cfg()
+    cfg, _ = _cfg_and_arm("configs/w1.toml")
     ro = cfg["rollouts"]
     out = Path(ro["out_dir"])
     table = generate_rollouts(EnvConfig(**cfg["env"]), ro["n_episodes"], ro["seed"])
@@ -45,7 +47,7 @@ def gen_rollouts_main() -> None:
 
 
 def train_wm_main() -> None:
-    cfg = _cfg()
+    cfg, _ = _cfg_and_arm("configs/w1.toml")
     caps = EnvConfig(**cfg["caps"])
     tr = cfg["train"]
     data = Path(cfg["rollouts"]["out_dir"])
@@ -72,3 +74,21 @@ def train_wm_main() -> None:
     reliability_plot(conf, correct, out / "reliability.png")
     separation_plot(d_id, d_nov, out / "separation.png")
     print(json.dumps(metrics, indent=2))
+
+
+def run_agent_main() -> None:
+    from lucid.agent import run_arm
+
+    cfg, arm = _cfg_and_arm("configs/w2.toml")
+    arms = [arm] if arm else cfg["run"]["arms"]
+    bad = [a for a in arms if a not in cfg["run"]["arms"]]
+    if bad:
+        raise SystemExit(f"--arm must be one of {cfg['run']['arms']}, got {bad}")
+    summaries = {a: run_arm(a, cfg["run"], cfg["agent"]) for a in arms}
+    out = Path(cfg["run"]["out_dir"])
+    out.mkdir(parents=True, exist_ok=True)
+    summary_path = out / "summary.json"
+    existing = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    existing.update(summaries)
+    summary_path.write_text(json.dumps(existing, indent=2))
+    print(json.dumps(summaries, indent=2))

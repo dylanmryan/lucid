@@ -23,7 +23,7 @@ One new module `src/lucid/agent.py` (+ a `lucid-run-agent` CLI entry in `cli.py`
 - **`Checker`** — wraps the W1 `Ensemble`. Input: previous *believed* state + chosen action (never true state). Diffs the WM's `point_next_state` against the planner's asserted belief per variable; on mismatch emits a revision note (e.g., "world model predicts box_2 still at receiving, validity 0.03 — your pick likely failed"). Planner re-drafts, ≤ 2 revisions per step; after that the WM's prediction becomes the working belief and the episode continues.
 - **Episode runner** — glues planner (+ optional checker) to `WarehouseEnv`. Per step: history → Planner → (action, belief) → [Checker → maybe revise] → `env.step(action)` → valid flag appended to history → log row.
 
-**Per-step log row** (parquet, one table per arm): episode_id, step, true_state, believed_state, wm_predicted_state, action, valid, n_revisions, n_parse_retries, parse_failure, cache_hit, tokens_in, tokens_out. The metric never influences the run; it is computed offline from logs. This log is already shaped like what the W4 monitor streams.
+**Per-step log row** (parquet, one table per arm): episode_id, step, true_state, believed_state, wm_predicted_state, action, valid, n_revisions, n_parse_retries, parse_failure, revision_parse_failure, cache_hit, tokens_in, tokens_out. The metric never influences the run; it is computed offline from logs. This log is already shaped like what the W4 monitor streams.
 
 W2 runs use the same env config the WM was trained on (4 boxes / 3 shelves) so checker accuracy is in-distribution by construction.
 
@@ -41,13 +41,15 @@ W2 runs use the same env config the WM was trained on (4 boxes / 3 shelves) so c
 
 **Parsing** is strict and defensive so malformed output cannot contaminate the metric: extract the first `{...}` block, `json.loads`, validate action kind/target types, and require `believed_next_state` to decode to a well-formed `State` with the correct box count (same validation posture as W1's `decode_state` guards). Failure → one retry with the error quoted back; after 2 failed retries the step logs `parse_failure=True`, **no action is executed** (true state and working belief unchanged; history records the failure), and the episode continues. Parse failures are excluded from the hallucination numerator and denominator and tracked as their own rate.
 
+A parse failure during a checker-prompted **revision re-draft** has different semantics: a validly parsed (but checker-disputed) action and belief already exist from the original draft, so that stale action executes anyway. The step keeps `parse_failure=False` — that flag is reserved for "no action executed" — and still counts in the hallucination metric, since a real belief was asserted. The row is instead flagged `revision_parse_failure=True`, making the wasted revision calls and the disputed execution visible; it is reported as its own per-step rate (`revision_parse_failure_rate`).
+
 **Determinism:** temperature 0, fixed model string, `ANTHROPIC_API_KEY` from the environment. Identical config + warm cache → byte-identical, free rerun.
 
 ## Metrics and arms
 
 **Hallucinated-state rate** (headline): over all non-parse-failure steps, the fraction where the asserted `believed_next_state` differs from the env's true post-action state on any variable. Reported per arm. Compounding drift counts (as in GILP); `first_divergence_step` per episode is also reported to make compounding visible.
 
-**Secondary metrics:** task success rate, mean steps, LLM calls/episode, revisions/step, invalid-action rate, cache hit rate, cost estimate from LiteLLM token counts.
+**Secondary metrics:** task success rate, mean steps, LLM calls/episode, revisions/step, invalid-action rate, revision-parse-failure rate, cache hit rate, cost estimate from LiteLLM token counts.
 
 **Arms:**
 - `ungated` — planner alone; the baseline number (paper analog: 0.176).
