@@ -154,3 +154,19 @@ def test_run_arm_adaptive_and_oracle(tmp_path, monkeypatch):
     s = run_arm("oracle", run_cfg, agent_cfg, gate_cfg)
     assert s["arm"] == "oracle"
     assert (tmp_path / "out" / "oracle.parquet").exists()
+
+
+def test_frontier_plot_writes_png(tmp_path):
+    from lucid.gate import frontier_plot
+
+    summary = {
+        "ungated": {"calls_per_episode": 17.6, "hallucinated_state_rate": 0.136},
+        "always_check": {"calls_per_episode": 19.8, "hallucinated_state_rate": 0.012},
+        "adaptive_lo": {"calls_per_episode": 19.0, "hallucinated_state_rate": 0.02},
+        "adaptive_mid": {"calls_per_episode": 18.3, "hallucinated_state_rate": 0.04},
+        "adaptive_hi": {"calls_per_episode": 17.9, "hallucinated_state_rate": 0.08},
+        "oracle": {"calls_per_episode": 18.0, "hallucinated_state_rate": 0.005},
+    }
+    out = tmp_path / "frontier.png"
+    frontier_plot(summary, out)
+    assert out.exists()

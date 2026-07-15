@@ -54,3 +54,40 @@ class OracleChecker:
             f"Your believed state is wrong. Disputed: {diffs}. Reconsider your action and belief."
         )
         return False, note, true_next
+
+
+def frontier_plot(summary: dict, path) -> None:
+    """Cost-accuracy frontier: extra LLM calls vs. ungated (x) against hallucination rate (y)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    base = summary["ungated"]["calls_per_episode"]
+
+    def xy(arm):
+        s = summary[arm]
+        return 100 * (s["calls_per_episode"] / base - 1), 100 * s["hallucinated_state_rate"]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    adaptive = sorted((xy(a) for a in summary if a.startswith("adaptive_")), key=lambda p: p[0])
+    if adaptive:
+        ax.plot(*zip(*adaptive), "o-", color="tab:blue", label="adaptive doubt gate")
+    for arm, marker, color in [
+        ("ungated", "s", "tab:red"),
+        ("always_check", "D", "tab:orange"),
+        ("oracle", "*", "tab:green"),
+    ]:
+        if arm in summary:
+            x, y = xy(arm)
+            ax.scatter([x], [y], marker=marker, s=90, color=color, zorder=3, label=arm)
+    ax.set(
+        xlabel="extra LLM calls vs. ungated (%)",
+        ylabel="hallucinated-state rate (%)",
+        title="Hallucination vs. cost: the doubt-budget frontier",
+    )
+    ax.legend()
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)

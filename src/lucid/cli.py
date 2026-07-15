@@ -92,3 +92,13 @@ def run_agent_main() -> None:
     existing.update(summaries)
     summary_path.write_text(json.dumps(existing, indent=2))
     print(json.dumps(summaries, indent=2))
+
+
+def frontier_main() -> None:
+    from lucid.gate import frontier_plot
+
+    cfg, _ = _cfg_and_arm("configs/w3.toml")
+    summary = json.loads((Path(cfg["run"]["out_dir"]) / "summary.json").read_text())
+    out = Path("docs/assets/frontier.png")
+    frontier_plot(summary, out)
+    print(f"wrote {out}")
