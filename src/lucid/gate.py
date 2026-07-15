@@ -47,11 +47,20 @@ class OracleChecker:
         true_next, _ = transition(self.env.state, action, self.env.cfg)
         if true_next == belief:
             return True, None, true_next
-        diffs = "; ".join(
-            f"{v}: expected differs from your belief" for v in disputed_vars(true_next, belief)
-        )
+        # Reveal true values, matching the WM Checker's note channel, so the oracle is a genuine
+        # accuracy ceiling (perfect detection AND correction) rather than a weaker withholding arm.
+        diffs = []
+        if true_next.robot_zone != belief.robot_zone:
+            diffs.append(
+                f"robot_zone is actually {true_next.robot_zone!r}, not {belief.robot_zone!r}"
+            )
+        for i, (w, b) in enumerate(zip(true_next.box_zones, belief.box_zones)):
+            if w != b:
+                diffs.append(f"box_{i} is actually {w!r}, not {b!r}")
         note = (
-            f"Your believed state is wrong. Disputed: {diffs}. Reconsider your action and belief."
+            "Your believed state is wrong. "
+            + "; ".join(diffs)
+            + ". Reconsider your action and belief."
         )
         return False, note, true_next
 
