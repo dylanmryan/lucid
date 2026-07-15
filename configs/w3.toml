@@ -1,0 +1,18 @@
+[agent]
+model = "claude-haiku-4-5"
+max_parse_retries = 2
+max_revisions = 2
+cache_dir = "data/llm_cache"
+
+[run]
+env = { n_boxes = 8, n_shelves = 5, max_steps = 60 }   # identical to w2.toml -> cache replay
+n_episodes = 100
+seed = 11
+arms = ["ungated", "always_check", "adaptive_lo", "adaptive_mid", "adaptive_hi", "oracle"]
+wm_checkpoint = "data/wm/ensemble.pt"
+out_dir = "data/agent"
+
+[gate]
+u_max = 0.4
+impact_other = 0.4
+thetas = { adaptive_lo = 0.2, adaptive_mid = 0.45, adaptive_hi = 0.7 }

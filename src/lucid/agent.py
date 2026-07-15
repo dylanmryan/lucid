@@ -370,26 +370,36 @@ def summarize(episodes: list[tuple[list[dict], bool]]) -> dict:
     }
 
 
-def run_arm(arm: str, run_cfg: dict, agent_cfg: dict) -> dict:
+def run_arm(arm: str, run_cfg: dict, agent_cfg: dict, gate_cfg: dict | None = None) -> dict:
     """Run one arm over n_episodes; writes <out_dir>/<arm>.parquet, returns the summary dict."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     from lucid.env import WarehouseEnv
     from lucid.wm import load_ensemble
+    from lucid.gate import DoubtGate, OracleChecker
 
     env_cfg = EnvConfig(**run_cfg["env"])
     env = WarehouseEnv(env_cfg)
     llm = CachedLLM(agent_cfg["model"], Path(agent_cfg["cache_dir"]))
     planner = Planner(llm, env_cfg, agent_cfg["max_parse_retries"])
-    checker = (
-        Checker(load_ensemble(Path(run_cfg["wm_checkpoint"]))) if arm == "always_check" else None
-    )
+    checker, gate = None, None
+    if arm == "oracle":
+        checker = OracleChecker(env)
+    elif arm != "ungated":
+        checker = Checker(load_ensemble(Path(run_cfg["wm_checkpoint"])))
+        if arm != "always_check":
+            gate = DoubtGate(gate_cfg["thetas"][arm], gate_cfg["u_max"], gate_cfg["impact_other"])
     episodes = []
     for i in range(run_cfg["n_episodes"]):
         episodes.append(
             run_episode(
-                env, planner, checker, run_cfg["seed"] * 100_000 + i, agent_cfg["max_revisions"]
+                env,
+                planner,
+                checker,
+                run_cfg["seed"] * 100_000 + i,
+                agent_cfg["max_revisions"],
+                gate=gate,
             )
         )
     out_dir = Path(run_cfg["out_dir"])

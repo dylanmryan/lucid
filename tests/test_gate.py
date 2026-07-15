@@ -129,3 +129,28 @@ def test_summarize_gate_rates(tmp_path, monkeypatch):
     s = summarize([(rows, success)])
     assert s["adopt_rate"] > 0.0
     assert s["ignore_rate"] == 0.0
+
+
+def test_run_arm_adaptive_and_oracle(tmp_path, monkeypatch):
+    from lucid.agent import run_arm
+
+    replies = scripted_replies(CFG, seed=11 * 100_000)
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    agent_cfg = {
+        "model": "test-model",
+        "max_parse_retries": 2,
+        "max_revisions": 2,
+        "cache_dir": str(tmp_path / "cache"),
+    }
+    run_cfg = {
+        "env": {"n_boxes": 2, "n_shelves": 2, "max_steps": 30},
+        "n_episodes": 1,
+        "seed": 11,
+        "wm_checkpoint": "unused-for-oracle",
+        "out_dir": str(tmp_path / "out"),
+    }
+    gate_cfg = {"u_max": 0.4, "impact_other": 0.4, "thetas": {"adaptive_mid": 0.45}}
+    s = run_arm("oracle", run_cfg, agent_cfg, gate_cfg)
+    assert s["arm"] == "oracle"
+    assert (tmp_path / "out" / "oracle.parquet").exists()

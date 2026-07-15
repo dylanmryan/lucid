@@ -84,7 +84,7 @@ def run_agent_main() -> None:
     bad = [a for a in arms if a not in cfg["run"]["arms"]]
     if bad:
         raise SystemExit(f"--arm must be one of {cfg['run']['arms']}, got {bad}")
-    summaries = {a: run_arm(a, cfg["run"], cfg["agent"]) for a in arms}
+    summaries = {a: run_arm(a, cfg["run"], cfg["agent"], cfg.get("gate")) for a in arms}
     out = Path(cfg["run"]["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
     summary_path = out / "summary.json"
