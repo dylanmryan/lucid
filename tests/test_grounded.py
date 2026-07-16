@@ -122,3 +122,8 @@ def test_grounded_generalizes_to_foreign_domain(tmp_path):
 
     ev = step_event(row)
     assert [v.name for v in ev.variables] == ["position", "fuel"]
+
+
+def test_to_parquet_empty_session_raises(tmp_path):
+    with pytest.raises(ValueError, match="no rows"):
+        GroundingSession().to_parquet(tmp_path / "empty.parquet")

@@ -16,7 +16,9 @@ class StateAdapter(Protocol):
 
     def variables(self, state: Any) -> dict[str, str]: ...
 
-    def goal_vars(self, state: Any, goals: Any) -> set[str]: ...
+    def goal_vars(self, state: Any, goals: Any) -> set[str]:
+        """Which variable names are goal-relevant. Must tolerate goals=None."""
+        ...
 
 
 class WarehouseAdapter:
@@ -74,6 +76,8 @@ class GroundingSession:
         self._step += 1
 
     def to_parquet(self, path: Path | str) -> None:
+        if not self.rows:
+            raise ValueError("no rows recorded; nothing to write")
         import pyarrow as pa
         import pyarrow.parquet as pq
 
