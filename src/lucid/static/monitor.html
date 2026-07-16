@@ -61,6 +61,8 @@
 <script>
 let ws = null;
 const $ = (id) => document.getElementById(id);
+// escape variable values before innerHTML — @grounded adapters can log arbitrary strings
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 async function loadEpisodes() {
   const arms = await (await fetch('/api/episodes')).json();
@@ -82,10 +84,10 @@ function render(ev) {
     ? `gate: ${ev.gate_decision} (doubt ${ev.doubt.toFixed(2)})` : 'gate: —';
   $('vars').innerHTML = ev.variables.map((v) => `
     <tr class="${v.agree ? '' : 'lie'}">
-      <td>${v.name}</td>
-      <td class="believed ${v.agree ? 'ok' : ''}">${v.believed}</td>
-      <td>${v.predicted}</td>
-      <td>${v.truth}</td>
+      <td>${esc(v.name)}</td>
+      <td class="believed ${v.agree ? 'ok' : ''}">${esc(v.believed)}</td>
+      <td>${esc(v.predicted)}</td>
+      <td>${esc(v.truth)}</td>
     </tr>`).join('');
 }
 
