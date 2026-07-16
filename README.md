@@ -8,7 +8,9 @@ ensemble world model with calibrated uncertainty. W2: an LLM planner tracking
 its own beliefs open-loop, the hallucinated-state metric, and the
 draft→check→revise loop that lets the world model catch the lies. W3: an
 adaptive doubt gate that spends revision calls only where they pay off, traced
-as a cost-accuracy frontier.
+as a cost-accuracy frontier. W4: a live grounding monitor that replays any
+episode as a belief-vs-reality stream, and `@grounded` — a wrapper that adds
+this grounding to any tool-using agent.
 
 ## Run
 
@@ -17,9 +19,53 @@ as a cost-accuracy frontier.
     uv run lucid-train-wm
     uv run lucid-run-agent     # needs ANTHROPIC_API_KEY on first run; cached afterwards
     uv run lucid-frontier      # renders the W3 frontier chart from summary.json
+    uv run lucid-monitor       # -> http://127.0.0.1:8000, replay any episode live
     uv run pytest
 
 Design docs: `docs/superpowers/specs/`.
+
+## Live grounding monitor
+
+<!-- record: uv run lucid-monitor -> http://127.0.0.1:8000, play "ungated · episode 1100091"
+     (50 of 60 steps hallucinated - the most dramatic episode), capture ~15s with QuickTime/Kap,
+     export gif to docs/assets/monitor.gif -->
+![grounding monitor](docs/assets/monitor.gif)
+
+    uv run lucid-monitor    # -> http://127.0.0.1:8000
+
+Pick any logged episode and press Play: each step shows, per state variable,
+what the **agent believes**, what the **world model predicts**, and the
+**ground truth** — a lie turns its row red and drops the grounding meter, and
+the gate badge shows the doubt-budget decision (revise / adopt / ignore) as it
+happens. The GIF above is a real ungated episode replayed from the W2 logs:
+the agent loses track of three boxes and never recovers.
+
+## @grounded — ground any agent
+
+The same grounding drops into any step-taking agent with a ~5-line adapter
+(`variables()` flattens your state to named values; `goal_vars()` names the
+ones that matter):
+
+```python
+from lucid.gate import DoubtGate
+from lucid.grounded import GroundingSession, grounded
+
+session = GroundingSession()
+
+@grounded(my_transition_model, MyAdapter(), gate=DoubtGate(theta=0.45), session=session)
+def step(state, action):
+    return my_agent.believe_next(state, action)
+
+# ... run your agent loop ...
+session.to_parquet("data/agent/my_agent.parquet")   # replay it in lucid-monitor
+```
+
+On a confident world-model disagreement the wrapper adopts the model's belief
+(free) or records a revise signal (re-drafting stays your agent's policy), and
+every step lands in a session you can replay in the monitor — in deployment,
+where there is no ground truth, the world model's prediction stands in for the
+reality column. The generality is tested: the suite grounds a toy rover agent
+whose state type the codebase has never seen.
 
 ## W3 results — the adaptive doubt-budget frontier
 
@@ -121,8 +167,3 @@ Ensemble disagreement and entropy separate never-seen configurations from
 familiar ones essentially perfectly — the uncertainty signal the doubt-budget
 gate spends in W3. Plots: `data/wm/reliability.png`, `data/wm/separation.png`
 (regenerate with the CLI commands above).
-
-## Roadmap
-
-- **W4** — live grounding monitor (belief vs. reality streaming over
-  websockets) and the `@grounded` wrapper for arbitrary tool-using agents.
