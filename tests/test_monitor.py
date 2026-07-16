@@ -96,3 +96,10 @@ def test_ws_replay_streams_episode(tmp_path):
         second = json.loads(ws.receive_text())
         assert second["grounding"] < 1.0 and second["gate_decision"] == "adopt"
         assert json.loads(ws.receive_text()) == {"done": True}
+
+
+def test_index_page_has_monitor_ui(tmp_path):
+    _write_fixture(tmp_path)
+    html = TestClient(create_app(tmp_path)).get("/").text
+    for needle in ("grounding-meter", "Agent believes", "World model predicts", "Ground truth"):
+        assert needle in html

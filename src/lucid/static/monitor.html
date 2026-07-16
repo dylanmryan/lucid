@@ -1,1 +1,111 @@
-<!doctype html><title>Lucid monitor</title><p>placeholder</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lucid — grounding monitor</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --dim:#8b949e;
+          --good:#3fb950; --bad:#f85149; --accent:#58a6ff; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text);
+         font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; padding:24px;
+         max-width:880px; margin:0 auto; }
+  h1 { font-size:18px; margin-bottom:16px; }
+  h1 span { color:var(--dim); font-weight:normal; }
+  header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:20px; }
+  select,button { background:var(--panel); color:var(--text); border:1px solid var(--line);
+                  border-radius:6px; padding:6px 12px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  #stepinfo { color:var(--dim); }
+  #meterwrap { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:14px 16px; margin-bottom:14px; }
+  #meterlabelrow { display:flex; justify-content:space-between; margin-bottom:8px; }
+  #meterlabel { color:var(--dim); font-size:13px; }
+  #meterpct { font-size:22px; font-weight:bold; }
+  #meterbar { height:10px; background:var(--line); border-radius:5px; overflow:hidden; }
+  #meter { height:100%; width:100%; background:var(--good); transition:width .25s,background .25s; }
+  #gatebadge { display:inline-block; border-radius:999px; padding:2px 12px; font-size:13px;
+               border:1px solid var(--line); color:var(--dim); }
+  #gatebadge.revise { background:#3d1d1d; color:var(--bad); border-color:var(--bad); }
+  #gatebadge.adopt { background:#1d2d3d; color:var(--accent); border-color:var(--accent); }
+  #gatebadge.ignore { background:#2d2d1d; color:#d29922; border-color:#d29922; }
+  table { width:100%; border-collapse:collapse; background:var(--panel);
+          border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  th,td { text-align:left; padding:8px 14px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:normal; font-size:13px; }
+  tr.lie td { background:#3d1d1d; }
+  tr.lie td.believed { color:var(--bad); font-weight:bold; }
+  td.ok { color:var(--good); }
+  #action { color:var(--accent); }
+</style>
+</head>
+<body>
+<h1>lucid <span>— grounding monitor</span></h1>
+<header>
+  <select id="episode"></select>
+  <button id="play">▶ Play</button>
+  <label style="color:var(--dim)">speed <input id="fps" type="range" min="1" max="10" value="3"></label>
+  <span id="stepinfo">pick an episode</span>
+</header>
+<div id="meterwrap" class="grounding-meter">
+  <div id="meterlabelrow">
+    <span id="meterlabel">grounding — does the agent's belief match reality?</span>
+    <span><span id="gatebadge"></span> <span id="meterpct">—</span></span>
+  </div>
+  <div id="meterbar"><div id="meter"></div></div>
+</div>
+<table>
+  <thead><tr><th>variable</th><th>Agent believes</th><th>World model predicts</th><th>Ground truth</th></tr></thead>
+  <tbody id="vars"></tbody>
+</table>
+<script>
+let ws = null;
+const $ = (id) => document.getElementById(id);
+
+async function loadEpisodes() {
+  const arms = await (await fetch('/api/episodes')).json();
+  for (const a of arms)
+    for (const e of a.episodes)
+      $('episode').add(new Option(`${a.arm} · episode ${e}`, `${a.arm}/${e}`));
+}
+
+function render(ev) {
+  $('stepinfo').textContent =
+    `step ${ev.step} · ${ev.action} · ${ev.valid ? 'valid' : 'INVALID'}`;
+  const pct = Math.round(ev.grounding * 100);
+  $('meterpct').textContent = pct + '%';
+  $('meter').style.width = pct + '%';
+  $('meter').style.background = pct === 100 ? 'var(--good)' : pct >= 75 ? '#d29922' : 'var(--bad)';
+  const badge = $('gatebadge');
+  badge.className = ev.gate_decision || '';
+  badge.textContent = ev.gate_decision
+    ? `gate: ${ev.gate_decision} (doubt ${ev.doubt.toFixed(2)})` : 'gate: —';
+  $('vars').innerHTML = ev.variables.map((v) => `
+    <tr class="${v.agree ? '' : 'lie'}">
+      <td>${v.name}</td>
+      <td class="believed ${v.agree ? 'ok' : ''}">${v.believed}</td>
+      <td>${v.predicted}</td>
+      <td>${v.truth}</td>
+    </tr>`).join('');
+}
+
+$('play').onclick = () => {
+  if (ws) { ws.close(); ws = null; $('play').textContent = '▶ Play'; return; }
+  const sel = $('episode').value;
+  if (!sel) return;
+  const [arm, ep] = sel.split('/');
+  ws = new WebSocket(`ws://${location.host}/ws/${arm}/${ep}?fps=${$('fps').value}`);
+  $('play').textContent = '⏸ Stop';
+  ws.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.done) { $('stepinfo').textContent += ' · episode complete'; ws = null;
+                   $('play').textContent = '▶ Play'; }
+    else render(ev);
+  };
+  ws.onclose = () => { if (ws) { ws = null; $('play').textContent = '▶ Play'; } };
+};
+loadEpisodes();
+/* ponytail: full innerHTML redraw per step — trivial DOM at this scale, no framework */
+</script>
+</body>
+</html>
