@@ -156,6 +156,34 @@ def test_run_arm_adaptive_and_oracle(tmp_path, monkeypatch):
     assert (tmp_path / "out" / "oracle.parquet").exists()
 
 
+def test_run_arm_adaptive_builds_gate(tmp_path, monkeypatch):
+    """The adaptive path loads a WM checker and a DoubtGate at the arm's theta."""
+    import lucid.wm as wm_mod
+    from lucid.agent import run_arm
+
+    replies = scripted_replies(CFG, seed=11 * 100_000)
+    counter = {"calls": 0}
+    monkeypatch.setattr(agent_mod.litellm, "completion", fake_completion_factory(replies, counter))
+    monkeypatch.setattr(wm_mod, "load_ensemble", lambda path: PerfectEnsemble(CFG))
+    agent_cfg = {
+        "model": "test-model",
+        "max_parse_retries": 2,
+        "max_revisions": 2,
+        "cache_dir": str(tmp_path / "cache"),
+    }
+    run_cfg = {
+        "env": {"n_boxes": 2, "n_shelves": 2, "max_steps": 30},
+        "n_episodes": 1,
+        "seed": 11,
+        "wm_checkpoint": "unused-patched",
+        "out_dir": str(tmp_path / "out"),
+    }
+    gate_cfg = {"u_max": 0.4, "impact_other": 0.4, "thetas": {"adaptive_mid": 0.45}}
+    s = run_arm("adaptive_mid", run_cfg, agent_cfg, gate_cfg)
+    assert s["arm"] == "adaptive_mid"
+    assert (tmp_path / "out" / "adaptive_mid.parquet").exists()
+
+
 def test_frontier_plot_writes_png(tmp_path):
     from lucid.gate import frontier_plot
 

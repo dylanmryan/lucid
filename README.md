@@ -65,8 +65,11 @@ essentially the achievable floor for this revision mechanism, and slightly
 always_check matches it confirms the near-perfect W1 world model is an excellent
 stand-in for ground truth.
 
-New API spend for W3: ~$5.70 (the two W2 arms replay from cache for free);
-a warm rerun of every arm makes zero network calls.
+New API spend for W3: ~$5.70 total actual — ~$3.40 for the final six-arm set
+(reconstructible from `summary.json`) plus ~$2.30 for a first oracle design that
+withheld true values and was discarded (see the honest note above). The two W2
+arms replay from cache for free; a warm rerun of every arm makes zero network
+calls.
 
 ## W2 results — hallucination and the check→revise loop
 
@@ -121,8 +124,5 @@ gate spends in W3. Plots: `data/wm/reliability.png`, `data/wm/separation.png`
 
 ## Roadmap
 
-- **W3** — adaptive doubt-budget gate: spend checks where disagreement and
-  uncertainty are high; four-arm eval (ungated / fixed / adaptive / oracle) and
-  the cost-accuracy frontier chart.
 - **W4** — live grounding monitor (belief vs. reality streaming over
   websockets) and the `@grounded` wrapper for arbitrary tool-using agents.
