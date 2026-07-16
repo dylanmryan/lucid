@@ -1,4 +1,4 @@
-"""CLI entry points: lucid-gen-rollouts, lucid-train-wm."""
+"""CLI entry points: lucid-gen-rollouts, lucid-train-wm, lucid-run-agent, lucid-frontier, lucid-monitor."""
 
 from __future__ import annotations
 

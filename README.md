@@ -37,8 +37,10 @@ Pick any logged episode and press Play: each step shows, per state variable,
 what the **agent believes**, what the **world model predicts**, and the
 **ground truth** — a lie turns its row red and drops the grounding meter, and
 the gate badge shows the doubt-budget decision (revise / adopt / ignore) as it
-happens. The GIF above is a real ungated episode replayed from the W2 logs:
-the agent loses track of three boxes and never recovers.
+happens. The GIF above is a real ungated episode replayed from the W2 logs —
+the worst in the run: the agent's beliefs are wrong on 50 of 60 steps,
+repeatedly drifting from and re-syncing with reality, ending with four boxes
+mistracked.
 
 ## @grounded — ground any agent
 
