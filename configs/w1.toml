@@ -1,21 +1,21 @@
-[env]
-n_boxes = 4
-n_shelves = 3
-max_steps = 40
-
-[novel_env]           # never seen in training; probes the uncertainty head
-n_boxes = 7
+[env]                 # bumped from 4/3 per the W2 spec contingency: Haiku barely
+n_boxes = 8           # hallucinated on small tasks; 8 boxes give a 9%+ ungated baseline
 n_shelves = 5
 max_steps = 40
 
+[novel_env]           # never seen in training; probes the uncertainty head
+n_boxes = 10
+n_shelves = 7
+max_steps = 40
+
 [caps]                # encoder sizing; must be >= both env and novel_env
-n_boxes = 8
-n_shelves = 6
+n_boxes = 12
+n_shelves = 8
 max_steps = 40
 
 [rollouts]
-n_episodes = 3000
-n_novel_episodes = 300
+n_episodes = 6000
+n_novel_episodes = 500
 seed = 7
 out_dir = "data/rollouts"
 
