@@ -14,15 +14,19 @@ class DoubtGate:
         self.impact_other = impact_other
 
     def decide(
-        self, pred: Prediction, disputed: list[str], goals: dict[int, str]
+        self, pred: Prediction, disputed: list[str], goal_vars: set[str]
     ) -> tuple[str, float]:
         """Returns (decision, doubt). decision in {"revise", "adopt", "ignore"}."""
-        goal_vars = {"robot_zone"} | {f"box_{i}" for i in goals}
         impact = 1.0 if any(v in goal_vars for v in disputed) else self.impact_other
         doubt = (1 - pred.disagreement) * (0.5 * (1 - pred.validity_prob) + 0.5 * impact)
         if pred.disagreement > self.u_max:
             return "ignore", doubt
         return ("revise", doubt) if doubt >= self.theta else ("adopt", doubt)
+
+
+def warehouse_goal_vars(goals: dict[int, str]) -> set[str]:
+    """The warehouse domain's goal-relevant variable names."""
+    return {"robot_zone"} | {f"box_{i}" for i in goals}
 
 
 def disputed_vars(expected, belief) -> list[str]:

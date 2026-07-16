@@ -23,13 +23,13 @@ def _pred(disagreement, validity_prob):
 
 def test_ignore_when_wm_uncertain():
     gate = DoubtGate(theta=0.2, u_max=0.4)
-    decision, doubt = gate.decide(_pred(0.6, 0.03), ["box_0"], {0: "shelf_a"})
+    decision, doubt = gate.decide(_pred(0.6, 0.03), ["box_0"], {"robot_zone", "box_0"})
     assert decision == "ignore"
 
 
 def test_revise_on_confident_invalid_goal_relevant():
     gate = DoubtGate(theta=0.45)
-    decision, doubt = gate.decide(_pred(0.05, 0.03), ["box_0"], {0: "shelf_a"})
+    decision, doubt = gate.decide(_pred(0.05, 0.03), ["box_0"], {"robot_zone", "box_0"})
     assert decision == "revise"
     # doubt = 0.95 * (0.5 * 0.97 + 0.5 * 1.0) ~= 0.936
     assert 0.9 < doubt < 0.95
@@ -37,7 +37,7 @@ def test_revise_on_confident_invalid_goal_relevant():
 
 def test_adopt_on_confident_valid_irrelevant():
     gate = DoubtGate(theta=0.45)
-    decision, doubt = gate.decide(_pred(0.05, 0.9), ["box_1"], {0: "shelf_a"})
+    decision, doubt = gate.decide(_pred(0.05, 0.9), ["box_1"], {"robot_zone", "box_0"})
     assert decision == "adopt"
     # doubt = 0.95 * (0.5 * 0.1 + 0.5 * 0.4) ~= 0.2375
     assert 0.2 < doubt < 0.3
@@ -45,12 +45,12 @@ def test_adopt_on_confident_valid_irrelevant():
 
 def test_robot_zone_is_always_goal_relevant():
     gate = DoubtGate(theta=0.45)
-    decision, _ = gate.decide(_pred(0.05, 0.03), ["robot_zone"], {0: "shelf_a"})
+    decision, _ = gate.decide(_pred(0.05, 0.03), ["robot_zone"], {"robot_zone", "box_0"})
     assert decision == "revise"
 
 
 def test_theta_monotonicity():
-    pred, disputed, goals = _pred(0.05, 0.5), ["box_0"], {0: "shelf_a"}
+    pred, disputed, goals = _pred(0.05, 0.5), ["box_0"], {"robot_zone", "box_0"}
     decisions = [DoubtGate(theta=t).decide(pred, disputed, goals)[0] for t in (0.1, 0.5, 0.9)]
     # raising theta can only turn revise into adopt, never the reverse
     assert decisions == sorted(decisions, key=lambda d: d == "adopt")
@@ -198,3 +198,9 @@ def test_frontier_plot_writes_png(tmp_path):
     out = tmp_path / "frontier.png"
     frontier_plot(summary, out)
     assert out.exists()
+
+
+def test_warehouse_goal_vars():
+    from lucid.gate import warehouse_goal_vars
+
+    assert warehouse_goal_vars({0: "shelf_a", 2: "shelf_b"}) == {"robot_zone", "box_0", "box_2"}

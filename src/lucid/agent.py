@@ -243,10 +243,10 @@ def run_episode(
             ok, note, wm_state = checker.check(working_belief, action, belief)
             decision = "revise"
             if not ok and gate is not None:
-                from lucid.gate import disputed_vars
+                from lucid.gate import disputed_vars, warehouse_goal_vars
 
                 decision, doubt = gate.decide(
-                    checker.last_pred, disputed_vars(wm_state, belief), goals
+                    checker.last_pred, disputed_vars(wm_state, belief), warehouse_goal_vars(goals)
                 )
                 gate_decision = decision
             if not ok and decision == "revise":
