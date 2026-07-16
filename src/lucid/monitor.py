@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
+
+import pyarrow.parquet as pq
+from fastapi import FastAPI, WebSocket
+from fastapi.responses import FileResponse
 
 
 @dataclass(frozen=True)
@@ -64,3 +70,48 @@ def step_events(rows: list[dict]) -> list[StepEvent]:
     """Ordered events for one episode; parse-failure rows carry no belief and are skipped."""
     live = [r for r in rows if not r["parse_failure"]]
     return [step_event(r) for r in sorted(live, key=lambda r: r["step"])]
+
+
+def create_app(data_dir: Path | str = "data/agent") -> FastAPI:
+    data_dir = Path(data_dir)
+    app = FastAPI(title="Lucid grounding monitor")
+
+    @app.get("/")
+    def index():
+        return FileResponse(Path(__file__).parent / "static" / "monitor.html")
+
+    @app.get("/api/episodes")
+    def episodes():
+        out = []
+        for f in sorted(data_dir.glob("*.parquet")):
+            ids = pq.read_table(f, columns=["episode_id"]).column("episode_id").to_pylist()
+            out.append({"arm": f.stem, "episodes": sorted(set(ids))})
+        return out
+
+    @app.get("/api/config")
+    def config():
+        files = sorted(data_dir.glob("*.parquet"))
+        if not files:
+            return {"variables": []}
+        row = pq.read_table(files[0]).to_pylist()[0]
+        return {"variables": list(_to_vars(row["true_state"]))}
+
+    @app.websocket("/ws/{arm}/{episode_id}")
+    async def replay(ws: WebSocket, arm: str, episode_id: int):
+        await ws.accept()
+        fps = float(ws.query_params.get("fps", 3))
+        rows = [
+            r
+            for r in pq.read_table(data_dir / f"{arm}.parquet").to_pylist()
+            if r["episode_id"] == episode_id
+        ]
+        for ev in step_events(rows):
+            await ws.send_text(ev.to_json())
+            await asyncio.sleep(1 / fps)
+        await ws.send_text(json.dumps({"done": True}))
+        await ws.close()
+
+    return app
+
+
+app = create_app()

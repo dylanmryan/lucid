@@ -102,3 +102,9 @@ def frontier_main() -> None:
     out = Path("docs/assets/frontier.png")
     frontier_plot(summary, out)
     print(f"wrote {out}")
+
+
+def monitor_main() -> None:
+    import uvicorn
+
+    uvicorn.run("lucid.monitor:app", host="127.0.0.1", port=8000)

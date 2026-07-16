@@ -1,6 +1,10 @@
 import json
 
-from lucid.monitor import VarView, step_event, step_events
+import pyarrow as pa
+import pyarrow.parquet as pq
+from fastapi.testclient import TestClient
+
+from lucid.monitor import VarView, create_app, step_event, step_events
 
 TRUE_S = '{"robot_zone": "staging", "box_zones": ["receiving", "shelf_a"]}'
 LIE_S = '{"robot_zone": "packing", "box_zones": ["receiving", "shelf_a"]}'
@@ -60,3 +64,35 @@ def test_flat_dict_states_supported():
     ev = step_event(_row(0, flat) | {"true_state": flat, "wm_predicted_state": None})
     assert [v.name for v in ev.variables] == ["position", "fuel"]
     assert ev.grounding == 1.0
+
+
+def _write_fixture(dir_path):
+    rows = [_row(0, TRUE_S), _row(1, LIE_S, predicted=TRUE_S, decision="adopt", doubt=0.4)]
+    table = pa.table({k: [r[k] for r in rows] for k in rows[0]})
+    pq.write_table(table, dir_path / "ungated.parquet")
+
+
+def test_api_episodes_and_config(tmp_path):
+    _write_fixture(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    eps = client.get("/api/episodes").json()
+    assert eps == [{"arm": "ungated", "episodes": [5]}]
+    cfg = client.get("/api/config").json()
+    assert cfg == {"variables": ["robot_zone", "box_0", "box_1"]}
+
+
+def test_index_serves_html(tmp_path):
+    _write_fixture(tmp_path)
+    r = TestClient(create_app(tmp_path)).get("/")
+    assert r.status_code == 200 and "html" in r.headers["content-type"]
+
+
+def test_ws_replay_streams_episode(tmp_path):
+    _write_fixture(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    with client.websocket_connect("/ws/ungated/5?fps=100") as ws:
+        first = json.loads(ws.receive_text())
+        assert first["step"] == 0 and first["grounding"] == 1.0
+        second = json.loads(ws.receive_text())
+        assert second["grounding"] < 1.0 and second["gate_decision"] == "adopt"
+        assert json.loads(ws.receive_text()) == {"done": True}
